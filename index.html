@@ -1,0 +1,1219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Portfolio Command Center</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:#0b0f14;--surface:#131920;--surface2:#1a2130;--border:#2a3444;
+  --text:#dce8f5;--muted:#667a95;--accent:#c8992a;--accent-glow:rgba(200,153,42,0.18);
+  --green:#3dba6f;--red:#e05050;--blue:#4a9eff;--orange:#d97706;--purple:#a78bfa;
+  --teal:#2dd4bf;
+  --font:'Sora',sans-serif;--mono:'IBM Plex Mono',monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:12.5px;line-height:1.5;min-height:100vh;overflow-x:hidden}
+.hidden{display:none!important}
+
+/* ── LOADING ── */
+#loading{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;gap:28px;padding:40px}
+.logo-block{text-align:center}
+.logo-block h1{font-size:30px;font-weight:700;letter-spacing:-0.5px}
+.logo-block h1 span{color:var(--accent)}
+.logo-block p{color:var(--muted);margin-top:6px;font-size:13px}
+.file-zone{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:32px;width:100%;max-width:500px}
+.file-zone h3{font-size:11px;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:6px}
+.file-zone p{color:var(--muted);font-size:12px;margin-bottom:20px;line-height:1.6}
+.file-pick-area{border:1.5px dashed var(--border);border-radius:10px;padding:24px;text-align:center;cursor:pointer;transition:border-color .2s,background .2s;position:relative}
+.file-pick-area:hover{border-color:var(--accent);background:var(--accent-glow)}
+.file-pick-area input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.file-pick-area .pick-icon{font-size:28px;margin-bottom:8px}
+.file-pick-area .pick-label{font-size:13px;font-weight:500;color:var(--text)}
+.file-pick-area .pick-sub{font-size:11px;color:var(--muted);margin-top:4px}
+.file-selected{border-style:solid;border-color:var(--green)}
+.file-selected .pick-label{color:var(--green)}
+.load-btn-row{margin-top:20px;display:flex;justify-content:flex-end}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:10px 22px;border-radius:8px;font-family:var(--font);font-size:13px;font-weight:500;cursor:pointer;border:none;transition:all .18s}
+.btn-primary{background:var(--accent);color:#000}
+.btn-primary:hover{background:#e0aa30;box-shadow:0 0 16px var(--accent-glow)}
+.btn-ghost{background:transparent;color:var(--text);border:1px solid var(--border)}
+.btn-ghost:hover{background:var(--surface2)}
+.btn-sm{padding:5px 12px;font-size:11px;border-radius:6px}
+.btn-xs{padding:3px 8px;font-size:10px;border-radius:5px}
+#load-status{color:var(--muted);font-size:12px;text-align:center;min-height:18px}
+
+/* ── SHELL ── */
+#app{display:flex;flex-direction:column;min-height:100vh}
+.topbar{display:flex;align-items:center;border-bottom:1px solid var(--border);background:var(--surface);position:sticky;top:0;z-index:100;height:48px;padding:0 20px;gap:0}
+.topbar-brand{font-size:14px;font-weight:700;letter-spacing:-0.3px;flex-shrink:0;margin-right:24px}
+.topbar-brand span{color:var(--accent)}
+.nav-tabs{display:flex;gap:2px;flex:1}
+.nav-tab{padding:0 16px;height:48px;display:flex;align-items:center;font-size:12.5px;font-weight:500;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s;white-space:nowrap}
+.nav-tab:hover{color:var(--text)}
+.nav-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.topbar-right{display:flex;align-items:center;gap:10px;margin-left:auto;flex-shrink:0}
+.data-badge{font-size:10px;color:var(--muted);padding:3px 10px;border:1px solid var(--border);border-radius:20px;font-family:var(--mono)}
+.data-badge span{color:var(--green)}
+
+/* ── ERROR PANEL ── */
+#error-panel{margin:14px 20px 0;display:none}
+.error-inner{background:rgba(224,80,80,.07);border:1px solid rgba(224,80,80,.25);border-radius:10px;padding:12px 16px}
+.error-inner h4{color:var(--red);font-size:11px;font-weight:600;margin-bottom:8px;text-transform:uppercase;letter-spacing:.6px}
+.error-item{font-family:var(--mono);font-size:11px;color:var(--text);padding:3px 0;border-bottom:1px solid rgba(224,80,80,.08)}
+.error-item:last-child{border-bottom:none}
+.ep{color:var(--accent)}.es{color:var(--blue)}
+
+/* ── CONTENT ── */
+#content{flex:1;padding:20px;overflow:auto}
+
+/* ── STAT CARDS ── */
+.dash-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-bottom:22px}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px}
+.stat-card.accent-border{border-left:3px solid var(--accent)}
+.stat-card .label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:7px}
+.stat-card .value{font-family:var(--mono);font-size:21px;font-weight:600}
+.stat-card .sub{font-size:10px;margin-top:4px;font-family:var(--mono);color:var(--muted)}
+
+/* ── BUCKET CARDS ── */
+.section-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:12px}
+.bucket-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin-bottom:22px}
+.bucket-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:15px}
+.bucket-card .bname{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.9px;margin-bottom:11px}
+.bname-fundamental{color:var(--accent)}
+.bname-est{color:var(--teal)}
+.bname-sme{color:var(--purple)}
+.bname-others{color:var(--blue)}
+.bname-unassigned{color:var(--muted)}
+.brow{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.brow .bk{font-size:11px;color:var(--muted)}.brow .bv{font-family:var(--mono);font-size:11.5px;font-weight:500}
+.prog-bar{height:3px;background:var(--border);border-radius:2px;margin:9px 0 3px;overflow:hidden}
+.prog-fill{height:100%;border-radius:2px;background:var(--accent);transition:width .5s}
+.prog-fill.over{background:var(--red)}
+.prog-fill-est{background:var(--teal)}
+.prog-fill-sme{background:var(--purple)}
+.prog-fill-others{background:var(--blue)}
+.prog-labels{display:flex;justify-content:space-between;font-size:9.5px;color:var(--muted);font-family:var(--mono)}
+
+/* ── PORTFOLIO STRIP ── */
+.portfolio-strip{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:22px}
+.port-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:11px 14px;min-width:150px}
+.port-card .pname{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;margin-bottom:7px}
+.port-card .pval{font-family:var(--mono);font-size:13px;font-weight:600}
+.port-card .psub{font-size:10px;color:var(--muted);font-family:var(--mono);margin-top:2px}
+
+/* ── ALERTS ── */
+.alerts-section{margin-bottom:22px}
+.alert-card{background:rgba(224,80,80,.06);border:1px solid rgba(224,80,80,.18);border-radius:8px;padding:11px 14px;margin-bottom:7px;display:flex;align-items:center;justify-content:space-between}
+.alert-stock{font-weight:500;font-size:13px}
+.alert-detail{font-size:10px;color:var(--muted);margin-top:2px}
+.alert-value{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--red)}
+.no-alerts{color:var(--muted);font-size:12px;padding:10px 0}
+
+/* ── TABLE SHARED ── */
+.table-toolbar{display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+.view-toggle{display:flex;border:1px solid var(--border);border-radius:7px;overflow:hidden}
+.view-btn{padding:5px 13px;font-size:11px;font-weight:500;cursor:pointer;background:transparent;border:none;color:var(--muted);font-family:var(--font);transition:all .15s}
+.view-btn.active{background:var(--accent);color:#000}
+.filter-select,.search-input{background:var(--surface);border:1px solid var(--border);color:var(--text);padding:5px 9px;border-radius:7px;font-family:var(--font);font-size:11px;cursor:pointer;outline:none}
+.filter-select:focus,.search-input:focus{border-color:var(--accent)}
+.search-input{width:180px}
+.table-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:10px}
+table{width:100%;border-collapse:collapse;font-size:11.5px}
+thead th{background:var(--surface2);padding:9px 11px;text-align:left;font-size:9.5px;font-weight:600;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);white-space:nowrap;border-bottom:1px solid var(--border);cursor:pointer;user-select:none}
+thead th:hover{color:var(--text)}
+thead th.sorted-asc::after{content:' ↑'}
+thead th.sorted-desc::after{content:' ↓'}
+tbody tr{border-bottom:1px solid rgba(42,52,68,.5);transition:background .1s}
+tbody tr:last-child{border-bottom:none}
+tbody tr:hover{background:rgba(255,255,255,.025)}
+td{padding:8px 11px;vertical-align:middle;white-space:nowrap}
+td.mono{font-family:var(--mono)}
+td.name-cell{font-weight:500;max-width:150px;overflow:hidden;text-overflow:ellipsis}
+.table-footer{display:flex;gap:20px;padding:9px 12px;background:var(--surface2);border-top:1px solid var(--border);font-size:11px;color:var(--muted)}
+.table-footer span{font-family:var(--mono);color:var(--text)}
+.no-data{text-align:center;padding:40px;color:var(--muted);font-size:13px}
+
+/* ── TAGS ── */
+.tag{display:inline-block;padding:2px 7px;border-radius:4px;font-size:9.5px;font-weight:600;letter-spacing:.3px}
+.tag-stcg{background:rgba(217,119,6,.12);color:var(--orange)}
+.tag-ltcg{background:rgba(61,186,111,.12);color:var(--green)}
+.tag-sme{background:rgba(167,139,250,.12);color:var(--purple)}
+.tag-nonsme{background:rgba(74,158,255,.1);color:var(--blue)}
+.tag-bucket{font-size:9px;padding:2px 6px;border-radius:3px;font-weight:700;letter-spacing:.3px}
+.tag-fundamental{background:rgba(200,153,42,.12);color:var(--accent)}
+.tag-est{background:rgba(45,212,191,.1);color:var(--teal)}
+.tag-sme-b{background:rgba(167,139,250,.1);color:var(--purple)}
+.tag-others{background:rgba(74,158,255,.08);color:var(--blue)}
+.tag-unassigned{background:rgba(103,122,149,.1);color:var(--muted)}
+.tag-hold{background:rgba(61,186,111,.1);color:var(--green)}
+.tag-exit{background:rgba(224,80,80,.12);color:var(--red)}
+.tag-exitwatch{background:rgba(217,119,6,.12);color:var(--orange)}
+
+/* ── CLICKABLE BUCKET CARDS ── */
+.bucket-card{cursor:pointer;transition:border-color .18s,box-shadow .18s}
+.bucket-card:hover{border-color:var(--accent);box-shadow:0 0 12px var(--accent-glow)}
+
+/* ── PORTFOLIO COLOR DOTS ── */
+.port-dot{width:6px;height:6px;border-radius:50%;display:inline-block;margin-right:4px;flex-shrink:0}
+
+/* ── P&L ── */
+.pl-pos{color:var(--green)}.pl-neg{color:var(--red)}
+.green{color:var(--green)}.red{color:var(--red)}.muted{color:var(--muted)}.orange{color:var(--orange)}
+
+/* ── SCREENER LINK ── */
+.scr-link{color:var(--muted);text-decoration:none;font-size:10px;opacity:.55;transition:opacity .15s,color .15s}
+.scr-link:hover{color:var(--accent);opacity:1}
+
+/* ── ROTATION ── */
+.rotation-layout{display:grid;grid-template-columns:260px 1fr;gap:18px}
+.rot-sidebar{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px}
+.rot-sidebar h3{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:14px}
+.bucket-btn-grp{display:flex;flex-direction:column;gap:5px}
+.bucket-btn{padding:10px 13px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--text);font-family:var(--font);font-size:12px;cursor:pointer;text-align:left;transition:all .15s}
+.bucket-btn:hover{background:var(--surface2)}
+.bucket-btn.active-fund{border-color:var(--accent);background:rgba(200,153,42,.08);color:var(--accent)}
+.bucket-btn.active-est{border-color:var(--teal);background:rgba(45,212,191,.07);color:var(--teal)}
+.bucket-btn.active-sme{border-color:var(--purple);background:rgba(167,139,250,.08);color:var(--purple)}
+.bucket-btn.active-others{border-color:var(--blue);background:rgba(74,158,255,.07);color:var(--blue)}
+.bucket-btn .bbt{font-weight:600;margin-bottom:2px}
+.bucket-btn .bbc{font-family:var(--mono);font-size:10px;color:var(--muted)}
+.rot-main{display:flex;flex-direction:column;gap:14px}
+.cap-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:15px}
+.cap-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:7px}
+.cap-row:last-child{margin-bottom:0}
+.cap-row .ck{font-size:11px;color:var(--muted)}.cap-row .cv{font-family:var(--mono);font-size:12.5px;font-weight:600}
+.cands-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:15px}
+.cands-card h4{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:12px}
+.cand-row{display:grid;grid-template-columns:1fr 90px 90px 90px;gap:10px;align-items:center;padding:9px 0;border-bottom:1px solid var(--border)}
+.cand-row:last-child{border-bottom:none}
+.cand-name{font-weight:500;font-size:12px}
+.cand-meta{font-size:10px;color:var(--muted);margin-top:1px}
+.cand-val{font-family:var(--mono);font-size:11.5px;text-align:right}
+.rot-empty{color:var(--muted);font-size:12px;padding:20px 0;text-align:center}
+</style>
+</head>
+<body>
+
+<!-- LOADING -->
+<div id="loading">
+  <div class="logo-block">
+    <h1>Portfolio <span>Command Center</span></h1>
+    <p>Personal equity portfolio management</p>
+  </div>
+  <div class="file-zone" id="live-zone">
+    <h3>Live Data</h3>
+    <p>Sign in with the Google account that owns the <strong style="color:var(--text)">Portfolio Transactions - Live</strong> sheet. Data is read straight from Google into this browser — the page itself holds no portfolio data.</p>
+    <div class="load-btn-row">
+      <button class="btn btn-primary" id="btn-google">Sign in with Google →</button>
+    </div>
+  </div>
+  <div class="file-zone">
+    <h3>Or Load From File</h3>
+    <p>Select your <strong style="color:var(--text)">Transaction_Statement.xlsx</strong> file. All computation happens locally in your browser — nothing is uploaded anywhere.</p>
+    <div class="file-pick-area" id="pick-area">
+      <input type="file" id="file-input" accept=".xlsx,.xls">
+      <div class="pick-icon">📂</div>
+      <div class="pick-label" id="pick-label">Click to select Transaction_Statement.xlsx</div>
+      <div class="pick-sub" id="pick-sub">or drag and drop here</div>
+    </div>
+    <div class="load-btn-row">
+      <button class="btn btn-primary" id="btn-load">Load Portfolio →</button>
+    </div>
+  </div>
+  <div id="load-status"></div>
+</div>
+
+<!-- APP -->
+<div id="app" class="hidden">
+  <div class="topbar">
+    <div class="topbar-brand">Portfolio <span>CC</span></div>
+    <div class="nav-tabs">
+      <div class="nav-tab active" data-tab="dashboard">Command Center</div>
+      <div class="nav-tab" data-tab="positions">Positions</div>
+      <div class="nav-tab" data-tab="rotation">Rotation Engine</div>
+    </div>
+    <div class="topbar-right">
+      <div class="data-badge" id="data-badge">— lots</div>
+      <button class="btn btn-ghost btn-sm" id="btn-reload">↻ Reload</button>
+    </div>
+  </div>
+  <div id="error-panel"></div>
+  <div id="content"></div>
+</div>
+
+<script>
+// ═══════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════
+const S = {
+  openLots:  [],
+  errors:    [],
+  prices:    {},   // ISIN → {price, pe, roce, roe, dma50, dma200, nse, bse}
+  stockMeta: {},   // ISIN → {name, bucket, smeCat}
+  // Caps come only from the Settings tab — the page is public, so no
+  // personal figures live in its code. A bucket without one shows "No cap set".
+  settings:  { Fundamental: {}, EST: {}, SME: {}, Others: {} },
+  portfolios:  [],   // portfolio tab names, discovered from the data
+  isinAliases: {},   // old ISIN → current ISIN, from the "ISIN Aliases" tab
+  activeTab:   'dashboard',
+  posView:     'lot',
+  filters:     { portfolio:'All', bucket:'All', tax:'All', status:'All', search:'' },
+  sortCol:     'buyDate',
+  sortDir:     1,
+  selBucket:   'Fundamental',
+  lastFile:    null,
+  source:      null,   // 'file' | 'sheet' — what ↻ Reload re-reads
+};
+
+// ═══════════════════════════════════════
+// LIVE DATA CONFIG (Google Sheets)
+// ═══════════════════════════════════════
+// Neither value is a secret: the client ID is public by design, and the sheet
+// is only readable by Google accounts it's shared with — access is enforced
+// by Google against the signed-in user's own token, not by this page.
+const GOOGLE_CLIENT_ID = 'PASTE_WEB_CLIENT_ID.apps.googleusercontent.com';
+const SHEET_ID         = '1JxhOdY8Z5FWxTJwzl9VaBhfDgvvIAMjsiho32vqJt2U';
+const SHEETS_SCOPE     = 'https://www.googleapis.com/auth/spreadsheets.readonly';
+
+const BUCKETS = ['Fundamental','EST','SME','Others'];
+
+// ═══════════════════════════════════════
+// UTILS
+// ═══════════════════════════════════════
+const pad2 = n => String(n).padStart(2,'0');
+const fmtDate = d => !d||isNaN(d) ? '—' : `${pad2(d.getDate())}-${pad2(d.getMonth()+1)}-${d.getFullYear()}`;   // dd-mm-yyyy
+const fmtN  = (n,d=2) => n==null||isNaN(n) ? '—' : n.toLocaleString('en-IN',{minimumFractionDigits:d,maximumFractionDigits:d});
+const fmtL  = n => {
+  if(n==null||isNaN(n)) return '—';
+  const sign = n<0 ? '-' : '';
+  const abs  = Math.abs(n);
+  if(abs>=10000000) return sign+'₹'+(abs/10000000).toFixed(2)+'Cr';
+  if(abs>=100000)   return sign+'₹'+(abs/100000).toFixed(2)+'L';
+  return sign+'₹'+fmtN(abs,0);
+};
+const daysSince = d => d&&!isNaN(d) ? Math.floor((Date.now()-d.getTime())/86400000) : 0;
+const isSTCG    = d => daysSince(d) < 365;
+const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+// Screener URL — search by stock name
+const scrUrl = isin => {
+  const m = S.prices[isin]||{};
+  const t = m.nse||m.bse||'';
+  if(t) return 'https://www.screener.in/company/'+encodeURIComponent(t)+'/';
+  return 'https://www.screener.in/search/?q='+encodeURIComponent(isin||'');
+};
+
+// Portfolio colours
+// Assigned in tab order, so each portfolio keeps the same colour as before.
+const PORT_PALETTE = ['#c8992a','#4a9eff','#3dba6f','#a78bfa','#e05050','#2dd4bf','#f59e0b','#ec4899'];
+const portColor = p => { const i = S.portfolios.indexOf(p); return i<0 ? '#667a95' : PORT_PALETTE[i % PORT_PALETTE.length]; };
+
+// Bucket colour class
+const bucketClass = b => ({Fundamental:'fundamental',EST:'est',SME:'sme-b',Others:'others'}[b]||'unassigned');
+const bucketNameClass = b => 'bname-'+(b||'unassigned').toLowerCase().replace(/\s/g,'-');
+
+// Bucket tag HTML
+const bucketTag = b => {
+  if(!b) return `<span class="tag tag-unassigned">—</span>`;
+  return `<span class="tag tag-bucket tag-${bucketClass(b)}">${esc(b)}</span>`;
+};
+
+// ═══════════════════════════════════════
+// PARSING
+// ═══════════════════════════════════════
+function parseSettings(wb) {
+  const ws = wb.Sheets['Settings'];
+  if(!ws) return;
+  const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:null, raw:true});
+  for(let i=1; i<rows.length; i++) {
+    const r = rows[i]; if(!r) continue;
+    const b = String(r[0]||'').trim();
+    if(!BUCKETS.includes(b)) continue;
+    if(r[1]!=null && r[1]!=='') S.settings[b].cap      = +r[1];
+    if(r[2]!=null && r[2]!=='') S.settings[b].maxStock = +r[2];
+    if(r[3]!=null && r[3]!=='') S.settings[b].trim     = +r[3];
+  }
+}
+
+function parseStockDetails(wb) {
+  const ws = wb.Sheets['Stock Details'];
+  if(!ws) return;
+  // Cols: A=Name, B=NameCheck, C=ISIN, D=Bucket, E=Check
+  const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:null});
+  for(let i=1; i<rows.length; i++) {
+    const r = rows[i]; if(!r) continue;
+    const isin   = String(r[2]||'').trim();
+    const bucket = String(r[3]||'').trim();
+    if(!isin) continue;
+    S.stockMeta[isin] = { name: String(r[0]||'').trim(), bucket };
+  }
+}
+
+function parseScreener(wb) {
+  const ws = wb.Sheets['SCREENER_ALL STKS'];
+  if(!ws) return;
+  // Only PE, ROCE, ROE are read from Screener — CMP/DMA come from portfolio sheet cols M/N/O
+  const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:null, raw:true});
+  if(!rows||rows.length<2) return;
+  const H = rows[0];
+  const ci = {
+    isin: H.findIndex(c=>String(c||'').trim()==='ISIN Code'),
+    nse:  H.findIndex(c=>String(c||'').trim()==='NSE Code'),
+    bse:  H.findIndex(c=>String(c||'').trim()==='BSE Code'),
+    pe:   H.findIndex(c=>String(c||'').trim()==='Price to Earning'),
+    roce: H.findIndex(c=>String(c||'').trim()==='Return on capital employed'),
+    roe:  H.findIndex(c=>String(c||'').trim()==='Return on equity'),
+    cmp:  H.findIndex(c=>String(c||'').trim()==='Current Price'),
+    d50:  H.findIndex(c=>String(c||'').trim()==='DMA 50'),
+    d200: H.findIndex(c=>String(c||'').trim()==='DMA 200'),
+  };
+  for(let i=1; i<rows.length; i++) {
+    const r = rows[i]; if(!r) continue;
+    const isin = String(r[ci.isin]||'').trim();
+    if(!isin) continue;
+    const pf = v => (v!=null&&v!=='') ? parseFloat(v) : null;
+    const st = v => (v!=null&&String(v).trim()!=='') ? String(v).trim() : null;
+    // cmp/dma50/dma200 here are only a fallback for lots whose sheet row
+    // formulas found no price (e.g. an ISIN aliased after a split)
+    S.prices[isin] = { nse: st(r[ci.nse]), bse: st(r[ci.bse]), pe: pf(r[ci.pe]), roce: pf(r[ci.roce]), roe: pf(r[ci.roe]),
+                       cmp: pf(r[ci.cmp]), dma50: pf(r[ci.d50]), dma200: pf(r[ci.d200]) };
+  }
+}
+
+// Portfolio tab columns are found by header name, not position: the live
+// Sheet dropped the xlsx's "Asset Type" column, and both layouts must load.
+// Theme and Thesis removed from sheet — now managed via annotations.json only
+const TX_HEADERS = {
+  type:'Type', name:'Asset Name', date:'Date', qty:'Quantity', rate:'Rate',
+  tradeRate:'Trade Rate', isin:'ISIN No.', bucket:'Bucket', status:'Status',
+  cmp:'Current Price', dma50:'DMA 50', dma200:'DMA 200',
+};
+
+// Sheet formula errors (#N/A when an ISIN isn't in Stock Details yet) read
+// as blank, so the stock shows as unassigned rather than a bucket named "#N/A".
+const cellText = v => { const s = String(v??'').trim(); return s.startsWith('#') ? '' : s; };
+const cellNum  = v => (v!=null && typeof v==='number') ? v : null;
+
+function parseTransactions(wb) {
+  // Any tab headed like a transaction list is a portfolio (names aren't
+  // hard-coded — the page is public). Tab order sets the portfolio order.
+  const txs = [];
+  S.portfolios = [];
+  for(const sheetName of wb.SheetNames) {
+    const ws = wb.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:null, raw:true});
+    if(!rows||!rows.length) continue;
+    const H = (rows[0]||[]).map(h => String(h??'').trim());   // xlsx has "Date " with a trailing space
+    if(!(H.includes(TX_HEADERS.type) && H.includes(TX_HEADERS.name) && H.includes(TX_HEADERS.qty))) continue;
+    S.portfolios.push(sheetName);
+    const c = {};
+    for(const [k,label] of Object.entries(TX_HEADERS)) c[k] = H.indexOf(label);
+    const missing = ['date','isin'].filter(k => c[k] < 0);
+    if(missing.length) {
+      S.errors.push({ portfolio:sheetName, isin:'', name:'', date:null,
+        msg:`Tab skipped — missing column(s): ${missing.map(k=>TX_HEADERS[k]).join(', ')}` });
+      continue;
+    }
+    for(let i=1; i<rows.length; i++) {
+      const r = rows[i]; if(!r) continue;
+      const type = String(r[c.type]||'').trim();
+      const name = String(r[c.name]||'').trim();
+      const qty  = r[c.qty];
+      if(!type||!name||!qty||typeof qty!=='number'||qty<=0) continue;
+      const rawDate = r[c.date];
+      let date;
+      if(rawDate instanceof Date)        date = rawDate;
+      else if(typeof rawDate==='number') date = new Date(Math.round((rawDate-25569)*86400*1000));
+      else                               date = new Date(rawDate||0);
+      const isin      = String(r[c.isin]||'').trim();
+      const tradeRate = cellNum(r[c.tradeRate]) ?? (r[c.rate]||0);
+      const bucket    = cellText(r[c.bucket]);
+      const status    = cellText(r[c.status]); // Hold | Exit | Exit Watch
+      const cmp       = cellNum(r[c.cmp]);
+      const dma50     = cellNum(r[c.dma50]);
+      const dma200    = cellNum(r[c.dma200]);
+      txs.push({ portfolio:sheetName, type, name, isin, date, qty, tradeRate, bucket, status, cmp, dma50, dma200 });
+    }
+  }
+  txs.sort((a,b) => a.date - b.date);
+  return txs;
+}
+
+// ═══════════════════════════════════════
+// FIFO ENGINE
+// ═══════════════════════════════════════
+// Old ISIN → current ISIN, for corporate actions that re-issue the ISIN
+// (e.g. a face-value split). Kept in the Sheet's "ISIN Aliases" tab
+// (A = Old ISIN, B = New ISIN, C = note) so a new one needs no code change.
+// Trades under either ISIN share one FIFO queue, and lots carry the current
+// ISIN so screener prices still match.
+function parseIsinAliases(wb) {
+  const ws = wb.Sheets['ISIN Aliases'];
+  if(!ws) return;
+  const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:null});
+  for(let i=1; i<rows.length; i++) {
+    const [from, to] = (rows[i]||[]).map(v => String(v??'').trim());
+    if(from && to) S.isinAliases[from] = to;
+  }
+}
+
+function runFIFO(transactions) {
+  const errors = [];
+  const queues = {}; // key: "portfolio|isin"
+
+  for(const tx of transactions) {
+    const isin = S.isinAliases[tx.isin] || tx.isin;
+    const k = `${tx.portfolio}|${isin}`;
+
+    if(tx.type === 'Split') {
+      // Row quantity is the total holding AFTER the split. Tax treatment:
+      // original buy dates and total cost carry over, so each open lot is
+      // rescaled (more shares, proportionally lower rate).
+      const q = queues[k] || [];
+      const held = q.reduce((s,l) => s + l.remaining, 0);
+      if(!held) {
+        errors.push({ portfolio:tx.portfolio, isin, name:tx.name, date:tx.date,
+          msg:`Split on ${fmtDate(tx.date)} — no open lots to split` });
+        continue;
+      }
+      const ratio = tx.qty / held;
+      for(const lot of q) { lot.remaining *= ratio; lot.qty *= ratio; lot.tradeRate /= ratio; }
+    } else if(tx.type === 'Buy' || tx.type === 'Bonus' || tx.type === 'Rights') {
+      // Bonus = a new lot at ₹0 cost; Rights = a new lot at the price paid.
+      // Both are acquired on the allotment date.
+      if(!queues[k]) queues[k] = [];
+      queues[k].push({
+        isin:        isin,
+        name:        tx.name,
+        portfolio:   tx.portfolio,
+        buyDate:     tx.date,
+        qty:         tx.qty,
+        remaining:   tx.qty,
+        tradeRate:   tx.tradeRate,
+        bucket:      tx.bucket,
+        status:      tx.status,
+        cmp:         tx.cmp,
+        dma50:       tx.dma50,
+        dma200:      tx.dma200,
+      });
+    } else if(tx.type === 'Sell') {
+      const q = queues[k] || [];
+      let toSell = tx.qty;
+      for(const lot of q) {
+        if(toSell <= 0) break;
+        const take = Math.min(lot.remaining, toSell);
+        lot.remaining -= take;
+        toSell        -= take;
+      }
+      if(queues[k]) queues[k] = queues[k].filter(l => l.remaining > 0);
+      if(toSell > 0) {
+        errors.push({ portfolio:tx.portfolio, isin, name:tx.name, date:tx.date,
+          msg:`Sell ${tx.qty} on ${fmtDate(tx.date)} — ${toSell} units unmatched` });
+      }
+    }
+  }
+
+  const openLots = [];
+  for(const q of Object.values(queues))
+    for(const lot of q)
+      if(lot.remaining > 0) openLots.push({ ...lot, qty: lot.remaining });
+
+  return { openLots, errors };
+}
+
+// ═══════════════════════════════════════
+// ENRICH LOTS
+// ═══════════════════════════════════════
+// Same rule as the sheet's Status formula (col L), which only fills on Buy
+// rows — used for lots from Bonus rows, which otherwise have no status.
+function deriveStatus(cmp, dma50, dma200) {
+  if(cmp==null || dma50==null || dma200==null) return '';
+  if(cmp >= dma50) return 'Hold';
+  return cmp < dma50*0.6 + dma200*0.4 ? 'Exit' : 'Exit Watch';
+}
+
+function enrich(lots) {
+  return lots.map(l => {
+    const sc  = S.prices[l.isin] || {};
+    const sm  = S.stockMeta[l.isin] || {};
+    const cur = l.cmp || sc.cmp || null;   // CMP from portfolio sheet col M, else screener
+    const dma50  = l.dma50  ?? sc.dma50  ?? null;
+    const dma200 = l.dma200 ?? sc.dma200 ?? null;
+    const inv = l.qty * l.tradeRate;
+    const cv  = cur ? l.qty * cur : null;
+    const pl  = cv != null ? cv - inv : null;
+    const plP = pl != null && inv > 0 ? (pl/inv)*100 : null;
+    const bucket = l.bucket || sm.bucket || '';
+    return {
+      ...l,
+      bucket,
+      // The sheet's Status formula reads "Hold" when its price lookup came back
+      // blank, so only trust it when that lookup actually found a price.
+      status:       (l.cmp && l.status) || deriveStatus(cur, dma50, dma200),
+      currentPrice: cur,
+      dma50, dma200,
+      invested: inv, currValue: cv,
+      pl, plPct: plP,
+      taxType:  isSTCG(l.buyDate) ? 'STCG' : 'LTCG',
+      daysHeld: daysSince(l.buyDate),
+      pe:   sc.pe   ?? null,
+      roce: sc.roce ?? null,
+      roe:  sc.roe  ?? null,
+    };
+  });
+}
+
+// ═══════════════════════════════════════
+// MASTER COMPUTE
+// ═══════════════════════════════════════
+function compute(wb) {
+  S.prices    = {};
+  S.stockMeta = {};
+  S.errors    = [];
+  S.isinAliases = {};
+  parseIsinAliases(wb);
+  parseSettings(wb);
+  parseStockDetails(wb);
+  parseScreener(wb);
+  const txs = parseTransactions(wb);
+  const { openLots, errors } = runFIFO(txs);
+  S.errors.push(...errors);
+  S.openLots = enrich(openLots);
+}
+
+// ═══════════════════════════════════════
+// FILE I/O
+// ═══════════════════════════════════════
+function setStatus(msg) { const el=document.getElementById('load-status'); if(el) el.textContent=msg; }
+
+// Google Sheets returns the screener-derived columns (CMP/DMA/PE…) as text,
+// e.g. "1575.00" — convert plain numeric strings so the parsers' number
+// checks behave exactly as they do for an .xlsx file.
+const NUMERIC_STR = /^-?[\d,]*\.?\d+$/;
+const coerceCell = v => (typeof v==='string' && NUMERIC_STR.test(v.trim())) ? parseFloat(v.replace(/,/g,'')) : v;
+
+// Build an XLSX-shaped workbook from a Sheets values:batchGet response, so
+// compute() and every parser run unchanged regardless of the data source.
+function valuesToWorkbook(valueRanges) {
+  const wb = { SheetNames: [], Sheets: {} };
+  for(const vr of valueRanges) {
+    const name = vr.range.split('!')[0].replace(/^'|'$/g,'').replace(/''/g,"'");
+    const rows = (vr.values||[]).map(r => r.map(coerceCell));
+    wb.SheetNames.push(name);
+    wb.Sheets[name] = XLSX.utils.aoa_to_sheet(rows);
+  }
+  return wb;
+}
+
+let gToken = null;   // {access_token, expiresAt} — memory only, never persisted
+
+function getToken() {
+  if(gToken && Date.now() < gToken.expiresAt - 60000) return Promise.resolve(gToken.access_token);
+  return new Promise((resolve, reject) => {
+    if(!window.google?.accounts?.oauth2) return reject(new Error('Google Sign-In failed to load — check your connection and retry.'));
+    const client = google.accounts.oauth2.initTokenClient({
+      client_id: GOOGLE_CLIENT_ID,
+      scope: SHEETS_SCOPE,
+      callback: resp => {
+        if(resp.error) return reject(new Error('Sign-in cancelled or refused ('+resp.error+').'));
+        gToken = { access_token: resp.access_token, expiresAt: Date.now() + resp.expires_in*1000 };
+        resolve(gToken.access_token);
+      },
+      error_callback: err => reject(new Error('Sign-in window closed ('+(err.type||'unknown')+').')),
+    });
+    client.requestAccessToken({ prompt: gToken ? '' : 'select_account' });
+  });
+}
+
+async function loadSheet() {
+  setStatus('Signing in…');
+  const token = await getToken();
+  setStatus('Fetching live sheet…');
+  const auth = { headers: { Authorization: 'Bearer '+token } };
+  const api  = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}`;
+  const check = res => {
+    if(res.status===401) { gToken = null; throw new Error('Session expired — sign in again.'); }
+    if(res.status===403 || res.status===404) throw new Error('This Google account cannot read the portfolio sheet. Sign in with the account it is shared with.');
+    if(!res.ok) throw new Error('Google Sheets error '+res.status);
+    return res.json();
+  };
+  // Tab names come from the Sheet itself (none are hard-coded in this page).
+  const meta = await fetch(`${api}?fields=sheets.properties.title`, auth).then(check);
+  const tabs = meta.sheets.map(s => s.properties.title).filter(t => t !== 'Processed Emails');
+  const qs = tabs.map(t => 'ranges='+encodeURIComponent(`'${t.replace(/'/g,"''")}'`)).join('&')
+           + '&valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=SERIAL_NUMBER';
+  const data = await fetch(`${api}/values:batchGet?${qs}`, auth).then(check);
+  setStatus('Computing positions…');
+  compute(valuesToWorkbook(data.valueRanges||[]));
+  S.source = 'sheet';
+  showApp();
+}
+
+document.getElementById('btn-google').addEventListener('click', () => {
+  loadSheet().catch(e => setStatus('Error: '+e.message));
+});
+
+async function loadFile(file) {
+  S.source = 'file';
+  S.lastFile = file;
+  setStatus('Reading file…');
+  const ab = await file.arrayBuffer();
+  setStatus('Parsing sheets…');
+  const wb = XLSX.read(ab, {type:'array', cellDates:false, raw:true});
+  setStatus('Computing positions…');
+  compute(wb);
+  showApp();
+}
+
+document.getElementById('file-input').addEventListener('change', e => {
+  const f = e.target.files[0]; if(!f) return;
+  document.getElementById('pick-label').textContent = f.name;
+  document.getElementById('pick-sub').textContent   = (f.size/1024).toFixed(0)+'KB';
+  document.getElementById('pick-area').classList.add('file-selected');
+  S.lastFile = f;
+});
+
+document.getElementById('btn-load').addEventListener('click', () => {
+  if(!S.lastFile) { setStatus('Please select the Transaction_Statement.xlsx file first.'); return; }
+  loadFile(S.lastFile).catch(e => setStatus('Error: '+e.message));
+});
+
+document.getElementById('btn-reload').addEventListener('click', () => {
+  if(S.source==='sheet') { loadSheet().catch(e => alert(e.message)); return; }
+  if(!S.lastFile) return;
+  loadFile(S.lastFile).catch(e => console.error(e));
+});
+
+// ═══════════════════════════════════════
+// SHOW APP
+// ═══════════════════════════════════════
+function showApp() {
+  document.getElementById('loading').classList.add('hidden');
+  document.getElementById('app').classList.remove('hidden');
+  const lots    = S.openLots.length;
+  const stocks  = new Set(S.openLots.map(l=>l.isin)).size;
+  const priced  = S.openLots.filter(l=>l.currentPrice).length;
+  document.getElementById('data-badge').innerHTML =
+    `<span>${lots}</span> lots · <span>${stocks}</span> stocks · <span>${priced}</span> priced`;
+  renderErrors();
+  renderContent();
+}
+
+// ═══════════════════════════════════════
+// ERRORS
+// ═══════════════════════════════════════
+function renderErrors() {
+  const panel = document.getElementById('error-panel');
+  if(!S.errors.length) { panel.style.display='none'; return; }
+  panel.style.display = 'block';
+  panel.innerHTML = `<div class="error-inner">
+    <h4>⚠ ${S.errors.length} Data Error${S.errors.length>1?'s':''}</h4>
+    ${S.errors.map(e=>`<div class="error-item">
+      <span class="ep">${esc(e.portfolio)}</span> · <span class="es">${esc(e.name)}</span> · ${esc(e.msg)}
+    </div>`).join('')}
+  </div>`;
+}
+
+// ═══════════════════════════════════════
+// DASHBOARD
+// ═══════════════════════════════════════
+function renderDashboard() {
+  const lots    = S.openLots;
+  const totInv  = lots.reduce((s,l)=>s+l.invested, 0);
+  const totCur  = lots.reduce((s,l)=>s+(l.currValue??l.invested), 0);
+  const totPL   = totCur - totInv;
+  const totPct  = totInv>0 ? (totPL/totInv)*100 : 0;
+  const unpriced= lots.filter(l=>!l.currentPrice).length;
+  const plClass = totPL>=0?'green':'red';
+
+  // Per-bucket stats
+  const bStats = {};
+  for(const b of BUCKETS) {
+    const bl  = lots.filter(l=>l.bucket===b);
+    const inv = bl.reduce((s,l)=>s+l.invested,0);
+    const cur = bl.reduce((s,l)=>s+(l.currValue??l.invested),0);
+    bStats[b] = { inv, cur, pl:cur-inv, plPct:inv>0?(cur-inv)/inv*100:0, count:bl.length };
+  }
+
+  // Per-portfolio stats
+  const portMap = {};
+  for(const l of lots) {
+    if(!portMap[l.portfolio]) portMap[l.portfolio]={inv:0,cur:0};
+    portMap[l.portfolio].inv += l.invested;
+    portMap[l.portfolio].cur += (l.currValue??l.invested);
+  }
+
+  // Trim alerts — sum current value per stock across all portfolios
+  const sv = {};
+  for(const l of lots) {
+    if(!sv[l.isin]) sv[l.isin]={name:l.name,bucket:l.bucket,val:0};
+    sv[l.isin].val += (l.currValue??l.invested);
+    if(l.bucket) sv[l.isin].bucket = l.bucket;
+  }
+  const trims = Object.values(sv)
+    .filter(s=>{ const c=S.settings[s.bucket]; return c&&s.val>c.trim; })
+    .sort((a,b)=>b.val-a.val);
+
+  const bucketFills = {
+    Fundamental:'',
+    EST:'prog-fill-est',
+    SME:'prog-fill-sme',
+    Others:'prog-fill-others',
+  };
+
+  return `
+  <!-- TOTAL CORPUS -->
+  <div class="dash-grid">
+    <div class="stat-card accent-border">
+      <div class="label">Total Invested</div>
+      <div class="value">${fmtL(totInv)}</div>
+      <div class="sub">${lots.length} lots · ${new Set(lots.map(l=>l.isin)).size} stocks</div>
+    </div>
+    <div class="stat-card accent-border">
+      <div class="label">Current Value</div>
+      <div class="value">${fmtL(totCur)}</div>
+      <div class="sub" style="color:${unpriced>0?'var(--orange)':'var(--green)'}">
+        ${unpriced>0?`⚠ ${unpriced} lots unpriced`:'All lots priced ✓'}
+      </div>
+    </div>
+    <div class="stat-card accent-border">
+      <div class="label">Unrealised P&amp;L</div>
+      <div class="value ${plClass}">${totPL>=0?'+':''}${fmtL(totPL)}</div>
+      <div class="sub ${plClass}">${totPct>=0?'+':''}${fmtN(totPct,2)}%</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Portfolios Active</div>
+      <div class="value">${Object.keys(portMap).length}</div>
+      <div class="sub">${lots.filter(l=>l.taxType==='STCG').length} STCG · ${lots.filter(l=>l.taxType==='LTCG').length} LTCG lots</div>
+    </div>
+  </div>
+
+  <!-- BUCKET ALLOCATION -->
+  <div class="section-title">Bucket Allocation</div>
+  <div class="bucket-grid">
+    ${BUCKETS.map(b=>{
+      const cfg=S.settings[b], st=bStats[b];
+      const pct = cfg.cap&&st.inv>0 ? Math.min(st.inv/cfg.cap*100,100):0;
+      const over = cfg.cap && st.inv>cfg.cap;
+      const fillCls = bucketFills[b];
+      return `<div class="bucket-card" onclick="S.filters.bucket='${b}';S.filters.portfolio='All';S.filters.tax='All';S.filters.status='All';S.filters.search='';setTab('positions')" title="View ${b} positions">
+        <div class="bname ${bucketNameClass(b)}">${b}</div>
+        <div class="brow"><span class="bk">Lots</span><span class="bv">${st.count}</span></div>
+        <div class="brow"><span class="bk">Invested</span><span class="bv">${fmtL(st.inv)}</span></div>
+        <div class="brow"><span class="bk">Current</span><span class="bv">${fmtL(st.cur)}</span></div>
+        <div class="brow"><span class="bk">P&amp;L</span>
+          <span class="bv ${st.pl>=0?'green':'red'}">${st.pl>=0?'+':''}${fmtL(st.pl)} (${fmtN(st.plPct,1)}%)</span>
+        </div>
+        ${cfg.cap?`
+        <div class="prog-bar"><div class="prog-fill ${fillCls}${over?' over':''}" style="width:${pct}%"></div></div>
+        <div class="prog-labels"><span>₹${(st.inv/100000).toFixed(1)}L deployed</span><span>Cap: ${fmtL(cfg.cap)}</span></div>
+        `:`<div style="margin-top:8px;font-size:10px;color:var(--muted)">No cap set</div>`}
+        <div style="margin-top:8px;font-size:9.5px;color:var(--muted);text-align:right">Click to view →</div>
+      </div>`;
+    }).join('')}
+  </div>
+
+  <!-- PORTFOLIO BREAKDOWN -->
+  <div class="section-title">Portfolio Breakdown</div>
+  <div class="portfolio-strip">
+    ${Object.entries(portMap).map(([p,v])=>{
+      const pl=v.cur-v.inv;
+      const plP=v.inv>0?pl/v.inv*100:0;
+      return `<div class="port-card">
+        <div class="pname" style="color:${portColor(p)}">${p}</div>
+        <div class="pval">${fmtL(v.cur)}</div>
+        <div class="psub ${pl>=0?'green':'red'}">${pl>=0?'+':''}${fmtL(pl)} (${fmtN(plP,1)}%)</div>
+      </div>`;
+    }).join('')}
+  </div>
+
+  <!-- TRIM ALERTS -->
+  <div class="alerts-section">
+    <div class="section-title">⚠ Trim Alerts — Positions Exceeding Threshold</div>
+    ${trims.length===0
+      ? `<div class="no-alerts">No positions exceeding trim thresholds ✓</div>`
+      : trims.map(a=>`<div class="alert-card">
+          <div>
+            <div class="alert-stock">${esc(a.name)}</div>
+            <div class="alert-detail">${a.bucket} · Trim threshold: ${fmtL(S.settings[a.bucket]?.trim)}</div>
+          </div>
+          <div class="alert-value">${fmtL(a.val)}</div>
+        </div>`).join('')
+    }
+  </div>`;
+}
+
+// Status tag HTML
+const statusTag = s => {
+  if(!s) return `<span class="tag tag-unassigned">—</span>`;
+  const cls = s==='Hold'?'hold':s==='Exit'?'exit':'exitwatch';
+  return `<span class="tag tag-${cls}">${esc(s)}</span>`;
+};
+
+// ═══════════════════════════════════════
+// POSITIONS — FILTERS + SORT
+// ═══════════════════════════════════════
+function filteredLots() {
+  let lots = [...S.openLots];
+  const f  = S.filters;
+  if(f.portfolio!=='All') lots=lots.filter(l=>l.portfolio===f.portfolio);
+  if(f.bucket!=='All')    lots=lots.filter(l=>(l.bucket||'Unassigned')===f.bucket);
+  if(f.tax!=='All')       lots=lots.filter(l=>l.taxType===f.tax);
+  if(f.status!=='All')    lots=lots.filter(l=>l.status===f.status);
+  if(f.search) {
+    const q=f.search.toLowerCase();
+    lots=lots.filter(l=>l.name.toLowerCase().includes(q)||l.isin.toLowerCase().includes(q));
+  }
+  lots.sort((a,b)=>{
+    let av=a[S.sortCol], bv=b[S.sortCol];
+    if(av instanceof Date) av=av.getTime();
+    if(bv instanceof Date) bv=bv.getTime();
+    if(av==null) return 1; if(bv==null) return -1;
+    return (av>bv?1:av<bv?-1:0)*S.sortDir;
+  });
+  return lots;
+}
+
+function summaryRows(lots) {
+  const map = {};
+  for(const l of lots) {
+    const k = l.isin;   // aggregate across all portfolios
+    if(!map[k]) map[k]={
+      isin:l.isin, name:l.name,
+      bucket:l.bucket, taxSet:new Set(), statusSet:new Set(),
+      qty:0, invested:0, currValue:0, currentPrice:null,
+      buyDates:[], pe:l.pe, roce:l.roce,
+    };
+    const s=map[k];
+    s.qty      += l.qty;
+    s.invested += l.invested;
+    s.currValue+= (l.currValue??l.invested);
+    s.taxSet.add(l.taxType);
+    s.buyDates.push(l.buyDate);
+    if(l.currentPrice) s.currentPrice=l.currentPrice;
+    if(l.status) s.statusSet.add(l.status);
+    if(l.bucket) s.bucket=l.bucket;
+  }
+  return Object.values(map).map(s=>({
+    ...s,
+    avgRate:  s.qty>0 ? s.invested/s.qty : 0,
+    pl:       s.currValue-s.invested,
+    plPct:    s.invested>0?(s.currValue-s.invested)/s.invested*100:0,
+    taxType:  [...s.taxSet].join('/'),
+    status:   [...s.statusSet].join('/'),
+    buyDate:  s.buyDates.reduce((m,d)=>d<m?d:m, s.buyDates[0]),
+    daysHeld: daysSince(s.buyDates.reduce((m,d)=>d<m?d:m, s.buyDates[0])),
+  }));
+}
+
+const sortTh = (col,lbl) =>
+  `<th data-sort="${col}" class="${S.sortCol===col?(S.sortDir>0?'sorted-asc':'sorted-desc'):''}">${lbl}</th>`;
+
+const plCell = (pl,pct) => pl==null ? '—' :
+  `<span class="${pl>=0?'pl-pos':'pl-neg'}">${pl>=0?'+':''}${fmtL(pl)}<br>
+  <small style="font-size:9.5px">${pct>=0?'+':''}${fmtN(pct,1)}%</small></span>`;
+
+function renderLotTable(lots) {
+  if(!lots.length) return `<div class="no-data">No lots match current filters.</div>`;
+  const ti=lots.reduce((s,l)=>s+l.invested,0);
+  const tc=lots.reduce((s,l)=>s+(l.currValue??l.invested),0);
+  const tp=tc-ti;
+  return `<div class="table-wrap"><table><thead><tr>
+    ${sortTh('name','Stock')}
+    <th>Portfolio</th>
+    ${sortTh('buyDate','Buy Date')}
+    ${sortTh('daysHeld','Days')}
+    ${sortTh('qty','Qty')}
+    <th>Buy ₹</th>
+    <th>CMP</th>
+    ${sortTh('invested','Invested')}
+    ${sortTh('currValue','Curr Val')}
+    ${sortTh('pl','P&L')}
+    <th>Tax</th>
+    <th>Bucket</th>
+    ${sortTh('status','Status')}
+    ${sortTh('pe','PE')}
+    ${sortTh('roce','ROCE')}
+    <th>↗</th>
+  </tr></thead><tbody>
+  ${lots.map(l=>`<tr>
+    <td class="name-cell" title="${esc(l.isin)}">${esc(l.name)}</td>
+    <td>
+      <span style="display:inline-flex;align-items:center;gap:4px">
+        <span class="port-dot" style="background:${portColor(l.portfolio)}"></span>
+        <span style="font-size:10px;font-weight:600;color:${portColor(l.portfolio)}">${esc(l.portfolio)}</span>
+      </span>
+    </td>
+    <td class="mono">${fmtDate(l.buyDate)}</td>
+    <td class="mono">${l.daysHeld}</td>
+    <td class="mono">${fmtN(l.qty,0)}</td>
+    <td class="mono">${fmtN(l.tradeRate,2)}</td>
+    <td class="mono">${l.currentPrice?fmtN(l.currentPrice,2):'<span class="muted">—</span>'}</td>
+    <td class="mono">${fmtL(l.invested)}</td>
+    <td class="mono">${l.currValue?fmtL(l.currValue):'<span class="muted">—</span>'}</td>
+    <td class="mono">${plCell(l.pl,l.plPct)}</td>
+    <td><span class="tag tag-${l.taxType==='STCG'?'stcg':'ltcg'}">${l.taxType}</span></td>
+    <td>${bucketTag(l.bucket)}</td>
+    <td>${statusTag(l.status)}</td>
+    <td class="mono muted">${l.pe?fmtN(l.pe,1):'—'}</td>
+    <td class="mono muted">${l.roce?fmtN(l.roce,1):'—'}</td>
+    <td><a href="${scrUrl(l.isin)}" target="_blank" class="scr-link" title="Open in Screener">↗</a></td>
+  </tr>`).join('')}
+  </tbody></table>
+  <div class="table-footer">
+    <div>Lots: <span>${lots.length}</span></div>
+    <div>Invested: <span>${fmtL(ti)}</span></div>
+    <div>Current: <span>${fmtL(tc)}</span></div>
+    <div>P&amp;L: <span class="${tp>=0?'green':'red'}">${tp>=0?'+':''}${fmtL(tp)}</span></div>
+  </div></div>`;
+}
+
+function renderSummaryTable(lots) {
+  const rows = summaryRows(lots);
+  if(!rows.length) return `<div class="no-data">No positions match.</div>`;
+  const ti=rows.reduce((s,r)=>s+r.invested,0);
+  const tc=rows.reduce((s,r)=>s+r.currValue,0);
+  const tp=tc-ti;
+  return `<div class="table-wrap"><table><thead><tr>
+    ${sortTh('name','Stock')}
+    ${sortTh('qty','Total Qty')}
+    <th>Avg Cost</th><th>CMP</th>
+    ${sortTh('invested','Invested')}
+    ${sortTh('currValue','Curr Val')}
+    ${sortTh('pl','P&L')}
+    <th>Tax</th><th>Bucket</th>
+    ${sortTh('status','Status')}
+    ${sortTh('pe','PE')}
+    ${sortTh('roce','ROCE')}
+    <th>↗</th>
+  </tr></thead><tbody>
+  ${rows.map(r=>`<tr>
+    <td class="name-cell" title="${esc(r.isin)}">${esc(r.name)}</td>
+    <td class="mono">${fmtN(r.qty,0)}</td>
+    <td class="mono">${fmtN(r.avgRate,2)}</td>
+    <td class="mono">${r.currentPrice?fmtN(r.currentPrice,2):'<span class="muted">—</span>'}</td>
+    <td class="mono">${fmtL(r.invested)}</td>
+    <td class="mono">${fmtL(r.currValue)}</td>
+    <td class="mono">${plCell(r.pl,r.plPct)}</td>
+    <td><span class="tag tag-${r.taxType.includes('STCG')?'stcg':'ltcg'}">${r.taxType}</span></td>
+    <td>${bucketTag(r.bucket)}</td>
+    <td>${statusTag(r.status)}</td>
+    <td class="mono muted">${r.pe?fmtN(r.pe,1):'—'}</td>
+    <td class="mono muted">${r.roce?fmtN(r.roce,1):'—'}</td>
+    <td><a href="${scrUrl(r.isin)}" target="_blank" class="scr-link">↗</a></td>
+  </tr>`).join('')}
+  </tbody></table>
+  <div class="table-footer">
+    <div>Stocks: <span>${rows.length}</span></div>
+    <div>Invested: <span>${fmtL(ti)}</span></div>
+    <div>Current: <span>${fmtL(tc)}</span></div>
+    <div>P&amp;L: <span class="${tp>=0?'green':'red'}">${tp>=0?'+':''}${fmtL(tp)}</span></div>
+  </div>
+  <div style="padding:8px 12px;background:var(--surface2);border-top:1px solid var(--border);font-size:10.5px;color:var(--muted);font-style:italic">
+    Summary view consolidates all lots per stock across all portfolios — blended avg cost, combined qty.
+  </div></div>`;
+}
+
+function attachSortHandlers() {
+  document.querySelectorAll('thead th[data-sort]').forEach(th=>{
+    th.addEventListener('click',()=>{
+      const col=th.dataset.sort;
+      if(S.sortCol===col) S.sortDir*=-1;
+      else { S.sortCol=col; S.sortDir=1; }
+      updateTable();
+    });
+  });
+}
+
+function updateTable() {
+  const c=document.getElementById('pos-table'); if(!c) return;
+  c.innerHTML = S.posView==='lot'
+    ? renderLotTable(filteredLots())
+    : renderSummaryTable(filteredLots());
+  attachSortHandlers();
+}
+
+function setPosView(v) {
+  S.posView = v;
+  document.querySelectorAll('.view-btn').forEach(b=>b.classList.toggle('active', b.dataset.view===v));
+  updateTable();
+}
+
+function resetFilters() {
+  S.filters = { portfolio:'All', bucket:'All', tax:'All', status:'All', search:'' };
+  renderContent(); // re-render whole positions section to reset all dropdowns
+}
+
+function renderPositions() {
+  const portfolios = ['All',...new Set(S.openLots.map(l=>l.portfolio))];
+  const f = S.filters;
+  return `
+  <div class="table-toolbar">
+    <div class="view-toggle">
+      <button class="view-btn${S.posView==='lot'?' active':''}" data-view="lot" onclick="setPosView('lot')">Lot View</button>
+      <button class="view-btn${S.posView==='summary'?' active':''}" data-view="summary" onclick="setPosView('summary')">Summary</button>
+    </div>
+    <input class="search-input" type="text" placeholder="Search stock / ISIN…"
+      value="${esc(f.search)}"
+      oninput="S.filters.search=this.value;updateTable()">
+    <select class="filter-select" onchange="S.filters.portfolio=this.value;updateTable()">
+      ${portfolios.map(p=>`<option value="${p}"${f.portfolio===p?' selected':''}>${p}</option>`).join('')}
+    </select>
+    <select class="filter-select" onchange="S.filters.bucket=this.value;updateTable()">
+      ${['All',...BUCKETS,'Unassigned'].map(b=>`<option value="${b}"${f.bucket===b?' selected':''}>${b}</option>`).join('')}
+    </select>
+    <select class="filter-select" onchange="S.filters.tax=this.value;updateTable()">
+      <option value="All"${f.tax==='All'?' selected':''}>All Tax</option>
+      <option value="STCG"${f.tax==='STCG'?' selected':''}>STCG</option>
+      <option value="LTCG"${f.tax==='LTCG'?' selected':''}>LTCG</option>
+    </select>
+    <select class="filter-select" onchange="S.filters.status=this.value;updateTable()">
+      <option value="All"${f.status==='All'?' selected':''}>All Status</option>
+      <option value="Hold"${f.status==='Hold'?' selected':''}>Hold</option>
+      <option value="Exit"${f.status==='Exit'?' selected':''}>Exit</option>
+      <option value="Exit Watch"${f.status==='Exit Watch'?' selected':''}>Exit Watch</option>
+    </select>
+    <button class="btn btn-primary btn-sm" onclick="resetFilters()" title="Clear all filters">✕ Reset</button>
+  </div>
+  <div id="pos-table">
+    ${S.posView==='lot'?renderLotTable(filteredLots()):renderSummaryTable(filteredLots())}
+  </div>`;
+}
+
+// ═══════════════════════════════════════
+// ROTATION ENGINE
+// ═══════════════════════════════════════
+const bucketActiveClass = b => ({
+  Fundamental:'active-fund',EST:'active-est',SME:'active-sme',Others:'active-others'
+}[b]||'');
+
+function renderRotation() {
+  const b   = S.selBucket;
+  const cfg = S.settings[b]||{};
+  const bl  = S.openLots.filter(l=>l.bucket===b);
+  const inv = bl.reduce((s,l)=>s+l.invested,0);
+  const cur = bl.reduce((s,l)=>s+(l.currValue??l.invested),0);
+  const avail = cfg.cap ? Math.max(0,cfg.cap-inv) : null;
+
+  // Group by ISIN+portfolio, only Exit and Exit Watch
+  const byStock = {};
+  for(const l of bl) {
+    if(l.status!=='Exit' && l.status!=='Exit Watch') continue;
+    const k=`${l.isin}|${l.portfolio}`;
+    if(!byStock[k]) byStock[k]={isin:l.isin,name:l.name,portfolio:l.portfolio,status:l.status,inv:0,cur:0};
+    byStock[k].inv += l.invested;
+    byStock[k].cur += (l.currValue??l.invested);
+    // If any lot is Exit, the group is Exit
+    if(l.status==='Exit') byStock[k].status='Exit';
+  }
+  const statusOrder = {'Exit':0,'Exit Watch':1};
+  const cands = Object.values(byStock)
+    .map(s=>({...s, pl:s.cur-s.inv, plPct:s.inv>0?(s.cur-s.inv)/s.inv*100:0}))
+    .sort((a,c2)=>{
+      const so = (statusOrder[a.status]??9)-(statusOrder[c2.status]??9);
+      if(so!==0) return so;
+      return a.plPct-c2.plPct; // worst P&L first within same status group
+    });
+
+  return `<div class="rotation-layout">
+    <div class="rot-sidebar">
+      <h3>Select Bucket</h3>
+      <div class="bucket-btn-grp">
+        ${BUCKETS.map(bn=>{
+          const st=S.openLots.filter(l=>l.bucket===bn);
+          const exitCount=st.filter(l=>l.status==='Exit'||l.status==='Exit Watch').length;
+          const binv=st.reduce((s,l)=>s+l.invested,0);
+          const isActive=S.selBucket===bn;
+          const aCls=isActive?bucketActiveClass(bn):'';
+          return `<div class="bucket-btn ${aCls}" onclick="S.selBucket='${bn}';renderContent()">
+            <div class="bbt">${bn}</div>
+            <div class="bbc">${fmtL(binv)} · ${exitCount} exit candidate${exitCount!==1?'s':''}</div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+    <div class="rot-main">
+      <div class="cap-card">
+        <div class="cap-row"><span class="ck">Bucket Cap</span><span class="cv">${cfg.cap?fmtL(cfg.cap):'No cap'}</span></div>
+        <div class="cap-row"><span class="ck">Deployed (cost)</span><span class="cv">${fmtL(inv)}</span></div>
+        <div class="cap-row"><span class="ck">Current Value</span><span class="cv">${fmtL(cur)}</span></div>
+        <div class="cap-row"><span class="ck">Headroom</span>
+          <span class="cv ${avail!=null?(avail>0?'green':'red'):'muted'}">
+            ${avail!=null?fmtL(avail):'—'}
+          </span>
+        </div>
+        <div class="cap-row"><span class="ck">Max per Stock</span><span class="cv">${cfg.maxStock?fmtL(cfg.maxStock):'—'}</span></div>
+        <div class="cap-row"><span class="ck">Trim Trigger</span><span class="cv orange">${cfg.trim?'> '+fmtL(cfg.trim):'—'}</span></div>
+      </div>
+      <div class="cands-card">
+        <h4>Exit Candidates — Exit first, then Exit Watch · Worst P&amp;L within each group</h4>
+        ${cands.length===0
+          ? `<div class="rot-empty">No Exit or Exit Watch positions in ${b} bucket.</div>`
+          : `<div class="cand-row" style="padding-bottom:6px">
+              <span style="font-size:9px;color:var(--muted);font-weight:700;letter-spacing:.5px">STOCK</span>
+              <span style="font-size:9px;color:var(--muted);font-weight:700;text-align:right">STATUS</span>
+              <span style="font-size:9px;color:var(--muted);font-weight:700;text-align:right">INVESTED</span>
+              <span style="font-size:9px;color:var(--muted);font-weight:700;text-align:right">P&amp;L</span>
+            </div>
+            ${cands.map(c=>`<div class="cand-row">
+              <div>
+                <div class="cand-name">${esc(c.name)}</div>
+                <div class="cand-meta">${esc(c.portfolio)}</div>
+              </div>
+              <div class="cand-val">${statusTag(c.status)}</div>
+              <div class="cand-val">${fmtL(c.inv)}</div>
+              <div class="cand-val ${c.pl>=0?'pl-pos':'pl-neg'}">
+                ${c.pl>=0?'+':''}${fmtL(c.pl)}<br>
+                <small style="font-size:9.5px">${fmtN(c.plPct,1)}%</small>
+              </div>
+            </div>`).join('')}`
+        }
+      </div>
+    </div>
+  </div>`;
+}
+
+// ═══════════════════════════════════════
+// MASTER RENDER
+// ═══════════════════════════════════════
+function renderContent() {
+  const el = document.getElementById('content'); if(!el) return;
+  switch(S.activeTab) {
+    case 'dashboard': el.innerHTML = renderDashboard();    break;
+    case 'positions': el.innerHTML = renderPositions();    attachSortHandlers(); break;
+    case 'rotation':  el.innerHTML = renderRotation();     break;
+  }
+}
+
+function setTab(tab) {
+  S.activeTab = tab;
+  document.querySelectorAll('.nav-tab').forEach(t=>t.classList.toggle('active', t.dataset.tab===tab));
+  renderContent();
+}
+
+document.addEventListener('DOMContentLoaded', ()=>{
+  document.querySelectorAll('.nav-tab').forEach(t=>{
+    t.addEventListener('click', ()=>setTab(t.dataset.tab));
+  });
+  // drag-and-drop support
+  const zone = document.getElementById('pick-area');
+  zone.addEventListener('dragover', e=>{e.preventDefault();zone.style.borderColor='var(--accent)';});
+  zone.addEventListener('dragleave', ()=>{zone.style.borderColor='';});
+  zone.addEventListener('drop', e=>{
+    e.preventDefault(); zone.style.borderColor='';
+    const f = e.dataTransfer.files[0];
+    if(f&&(f.name.endsWith('.xlsx')||f.name.endsWith('.xls'))) {
+      document.getElementById('pick-label').textContent = f.name;
+      document.getElementById('pick-sub').textContent   = (f.size/1024).toFixed(0)+'KB';
+      zone.classList.add('file-selected');
+      S.lastFile = f;
+    }
+  });
+});
+</script>
+</body>
+</html>
