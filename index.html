@@ -194,6 +194,56 @@ td.name-cell{font-weight:500;max-width:150px;overflow:hidden;text-overflow:ellip
 .cand-meta{font-size:10px;color:var(--muted);margin-top:1px}
 .cand-val{font-family:var(--mono);font-size:11.5px;text-align:right}
 .rot-empty{color:var(--muted);font-size:12px;padding:20px 0;text-align:center}
+
+/* ── LOT CARDS (phone view of the positions tables) ── */
+.lot-cards,.mobile-only{display:none}
+.lot-card{padding:12px 14px;border-bottom:1px solid var(--border)}
+.lot-card:last-child{border-bottom:none}
+.lc-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.lc-name{font-weight:600;font-size:13.5px;line-height:1.3}
+.lc-name a{color:inherit;text-decoration:none}
+.lc-pl{font-family:var(--mono);font-size:13px;font-weight:600;text-align:right;white-space:nowrap}
+.lc-pl small{display:block;font-size:10.5px;font-weight:500}
+.lc-meta{font-size:11px;color:var(--muted);margin-top:3px;display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+.lc-tags{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}
+.lc-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px 10px;margin-top:10px}
+.lc-grid .k{font-size:9.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+.lc-grid .v{font-family:var(--mono);font-size:12px;margin-top:1px}
+
+/* ── PHONE LAYOUT ── */
+@media (max-width:700px){
+  body{font-size:13px}
+  .topbar{flex-wrap:wrap;height:auto;padding:0 12px}
+  .topbar-brand{height:44px;display:flex;align-items:center;margin-right:0}
+  .data-badge{display:none}
+  .nav-tabs{order:3;flex-basis:100%;border-top:1px solid var(--border);margin:0 -12px;padding:0 4px}
+  .nav-tab{flex:1;justify-content:center;height:42px;padding:0 6px;font-size:12.5px}
+  #content{padding:12px}
+  #error-panel{margin:12px 12px 0}
+
+  .dash-grid{grid-template-columns:1fr 1fr;gap:8px}
+  .stat-card{padding:12px}
+  .stat-card .value{font-size:16px}
+  .port-card{flex:1 1 calc(50% - 10px);min-width:0}
+  .alert-card{gap:10px}
+
+  .table-toolbar{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .view-toggle,.search-input{grid-column:1/-1}
+  .view-btn{flex:1;padding:9px 0;font-size:12.5px}
+  .search-input{width:100%}
+  .table-toolbar .btn{justify-content:center;padding:9px 10px;font-size:13px}
+  .filter-select,.search-input{font-size:13px;padding:9px 10px}
+  .mobile-only{display:block}
+  .table-wrap table{display:none}
+  .lot-cards{display:block}
+  .table-footer{display:grid;grid-template-columns:1fr 1fr;gap:6px 12px}
+
+  .rotation-layout{grid-template-columns:1fr;gap:12px}
+  .bucket-btn-grp{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  .bucket-btn .bbc{font-size:9.5px}
+  .cand-row{grid-template-columns:1fr auto auto;gap:10px}
+  .cand-row > :nth-child(3){display:none}   /* drop Invested — P&L and status matter most on a phone */
+}
 </style>
 </head>
 <body>
@@ -917,6 +967,44 @@ const plCell = (pl,pct) => pl==null ? '—' :
   `<span class="${pl>=0?'pl-pos':'pl-neg'}">${pl>=0?'+':''}${fmtL(pl)}<br>
   <small style="font-size:9.5px">${pct>=0?'+':''}${fmtN(pct,1)}%</small></span>`;
 
+// Phone view: one card per lot / stock instead of a 16-column table row.
+const lcCell = (k,v) => `<div><div class="k">${k}</div><div class="v">${v}</div></div>`;
+const lcPl = (pl,pct) => pl==null ? '<span class="muted">—</span>' :
+  `<span class="${pl>=0?'pl-pos':'pl-neg'}">${pl>=0?'+':''}${fmtL(pl)}<small>${pct>=0?'+':''}${fmtN(pct,1)}%</small></span>`;
+
+function lotCard(l) {
+  return `<div class="lot-card">
+    <div class="lc-top">
+      <div class="lc-name"><a href="${scrUrl(l.isin)}" target="_blank">${esc(l.name)}</a></div>
+      <div class="lc-pl">${lcPl(l.pl,l.plPct)}</div>
+    </div>
+    <div class="lc-meta">
+      <span class="port-dot" style="background:${portColor(l.portfolio)}"></span>
+      <span style="color:${portColor(l.portfolio)};font-weight:600">${esc(l.portfolio)}</span>
+      · ${fmtDate(l.buyDate)} · ${l.daysHeld}d
+    </div>
+    <div class="lc-tags">${statusTag(l.status)}<span class="tag tag-${l.taxType==='STCG'?'stcg':'ltcg'}">${l.taxType}</span>${bucketTag(l.bucket)}</div>
+    <div class="lc-grid">
+      ${lcCell('Qty',fmtN(l.qty,0))}${lcCell('Buy ₹',fmtN(l.tradeRate,2))}${lcCell('CMP',l.currentPrice?fmtN(l.currentPrice,2):'—')}
+      ${lcCell('Invested',fmtL(l.invested))}${lcCell('Current',l.currValue?fmtL(l.currValue):'—')}${lcCell('PE',l.pe?fmtN(l.pe,1):'—')}
+    </div>
+  </div>`;
+}
+
+function summaryCard(r) {
+  return `<div class="lot-card">
+    <div class="lc-top">
+      <div class="lc-name"><a href="${scrUrl(r.isin)}" target="_blank">${esc(r.name)}</a></div>
+      <div class="lc-pl">${lcPl(r.pl,r.plPct)}</div>
+    </div>
+    <div class="lc-tags">${statusTag(r.status)}<span class="tag tag-${r.taxType.includes('STCG')?'stcg':'ltcg'}">${r.taxType}</span>${bucketTag(r.bucket)}</div>
+    <div class="lc-grid">
+      ${lcCell('Qty',fmtN(r.qty,0))}${lcCell('Avg Cost',fmtN(r.avgRate,2))}${lcCell('CMP',r.currentPrice?fmtN(r.currentPrice,2):'—')}
+      ${lcCell('Invested',fmtL(r.invested))}${lcCell('Current',fmtL(r.currValue))}${lcCell('PE',r.pe?fmtN(r.pe,1):'—')}
+    </div>
+  </div>`;
+}
+
 function renderLotTable(lots) {
   if(!lots.length) return `<div class="no-data">No lots match current filters.</div>`;
   const ti=lots.reduce((s,l)=>s+l.invested,0);
@@ -964,6 +1052,7 @@ function renderLotTable(lots) {
     <td><a href="${scrUrl(l.isin)}" target="_blank" class="scr-link" title="Open in Screener">↗</a></td>
   </tr>`).join('')}
   </tbody></table>
+  <div class="lot-cards">${lots.map(lotCard).join('')}</div>
   <div class="table-footer">
     <div>Lots: <span>${lots.length}</span></div>
     <div>Invested: <span>${fmtL(ti)}</span></div>
@@ -1007,6 +1096,7 @@ function renderSummaryTable(lots) {
     <td><a href="${scrUrl(r.isin)}" target="_blank" class="scr-link">↗</a></td>
   </tr>`).join('')}
   </tbody></table>
+  <div class="lot-cards">${rows.map(summaryCard).join('')}</div>
   <div class="table-footer">
     <div>Stocks: <span>${rows.length}</span></div>
     <div>Invested: <span>${fmtL(ti)}</span></div>
@@ -1048,6 +1138,13 @@ function resetFilters() {
   renderContent(); // re-render whole positions section to reset all dropdowns
 }
 
+// Phone has no clickable column headers, so sorting is a drop-down there.
+const MOBILE_SORTS = [
+  ['buyDate|1','Oldest first'], ['buyDate|-1','Newest first'],
+  ['pl|-1','Biggest gain'], ['pl|1','Biggest loss'],
+  ['invested|-1','Largest invested'], ['name|1','Name A–Z'],
+];
+
 function renderPositions() {
   const portfolios = ['All',...new Set(S.openLots.map(l=>l.portfolio))];
   const f = S.filters;
@@ -1061,10 +1158,10 @@ function renderPositions() {
       value="${esc(f.search)}"
       oninput="S.filters.search=this.value;updateTable()">
     <select class="filter-select" onchange="S.filters.portfolio=this.value;updateTable()">
-      ${portfolios.map(p=>`<option value="${p}"${f.portfolio===p?' selected':''}>${p}</option>`).join('')}
+      ${portfolios.map(p=>`<option value="${p}"${f.portfolio===p?' selected':''}>${p==='All'?'All portfolios':p}</option>`).join('')}
     </select>
     <select class="filter-select" onchange="S.filters.bucket=this.value;updateTable()">
-      ${['All',...BUCKETS,'Unassigned'].map(b=>`<option value="${b}"${f.bucket===b?' selected':''}>${b}</option>`).join('')}
+      ${['All',...BUCKETS,'Unassigned'].map(b=>`<option value="${b}"${f.bucket===b?' selected':''}>${b==='All'?'All buckets':b}</option>`).join('')}
     </select>
     <select class="filter-select" onchange="S.filters.tax=this.value;updateTable()">
       <option value="All"${f.tax==='All'?' selected':''}>All Tax</option>
@@ -1076,6 +1173,9 @@ function renderPositions() {
       <option value="Hold"${f.status==='Hold'?' selected':''}>Hold</option>
       <option value="Exit"${f.status==='Exit'?' selected':''}>Exit</option>
       <option value="Exit Watch"${f.status==='Exit Watch'?' selected':''}>Exit Watch</option>
+    </select>
+    <select class="filter-select mobile-only" onchange="const [c,d]=this.value.split('|');S.sortCol=c;S.sortDir=+d;updateTable()">
+      ${MOBILE_SORTS.map(([v,lbl])=>`<option value="${v}"${v===S.sortCol+'|'+S.sortDir?' selected':''}>${lbl}</option>`).join('')}
     </select>
     <button class="btn btn-primary btn-sm" onclick="resetFilters()" title="Clear all filters">✕ Reset</button>
   </div>
