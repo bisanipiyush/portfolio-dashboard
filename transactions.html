@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Transactions</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="common.css?v=2">
+</head>
+<body>
+
+<!-- LOADING -->
+<div id="loading">
+  <div class="logo-block">
+    <h1>Portfolio <span>Transactions</span></h1>
+    <p>Every trade and corporate action from the Portfolio Ledger</p>
+  </div>
+  <div class="file-zone">
+    <h3>Live Data</h3>
+    <p>Sign in with the Google account that owns the <strong style="color:var(--text)">Portfolio Ledger</strong> sheet. Data is read straight from Google into this browser — the page itself holds no portfolio data.</p>
+    <div class="load-btn-row">
+      <button class="btn btn-primary" id="btn-google">Sign in with Google →</button>
+    </div>
+  </div>
+  <div id="load-status"></div>
+</div>
+
+<!-- APP -->
+<div id="app" class="hidden">
+  <div class="topbar">
+    <div class="topbar-brand">Portfolio <span>CC</span></div>
+    <div class="nav-tabs">
+      <a class="nav-tab" href="./">Command Center</a>
+      <a class="nav-tab" href="./#positions">Positions</a>
+      <a class="nav-tab" href="./#rotation">Rotation Engine</a>
+      <a class="nav-tab" href="gains.html">Capital Gains</a>
+      <a class="nav-tab active" href="transactions.html">Transactions</a>
+    </div>
+    <div class="topbar-right">
+      <div class="data-badge" id="data-badge">—</div>
+      <button class="btn btn-ghost btn-sm" id="btn-reload">↻ Reload</button>
+    </div>
+  </div>
+  <div id="content"></div>
+</div>
+
+<script src="common.js?v=2"></script>
+<script>
+// Reads the Portfolio Ledger (the permanent record). Loading, FIFO matching
+// and the tax rules are shared with the holdings page: common.js
+Object.assign(S, {
+  txFilters: { portfolio:'All', isin:'All', type:'All', from:'', to:'' },
+  txSort:    { col:'date', dir:-1 },
+});
+
+// ═══════════════════════════════════════
+// TRANSACTIONS
+// ═══════════════════════════════════════
+const txIsin = t => S.isinAliases[t.isin] || t.isin;   // old + new ISIN of one stock filter together
+const typeTag = t => `<span class="tag tag-${t==='Buy'?'hold':t==='Sell'?'exit':'sme'}">${esc(t)}</span>`;
+const txCharges = t => (t.brokerage||0)+(t.gst||0)+(t.stt||0)+(t.other||0);
+
+function txFiltered() {
+  const f = S.txFilters;
+  const key = s => s ? +s.replace(/-/g,'') : null;   // yyyy-mm-dd → yyyymmdd
+  const from = key(f.from), to = key(f.to);
+  const rows = S.ledgerTxs.filter(t =>
+       (f.portfolio==='All' || t.portfolio===f.portfolio)
+    && (f.isin==='All'      || txIsin(t)===f.isin)
+    && (f.type==='All'      || t.type===f.type)
+    && (from==null || dayKey(t.date)>=from)
+    && (to==null   || dayKey(t.date)<=to));
+  const { col, dir } = S.txSort;
+  return rows.sort((a,b)=>{
+    let av=a[col], bv=b[col];
+    if(av instanceof Date) { av=av.getTime(); bv=bv.getTime(); }
+    if(av==null) return 1; if(bv==null) return -1;
+    return ((av>bv?1:av<bv?-1:0) || (a.date-b.date)) * dir;
+  });
+}
+
+function renderTxns() {
+  if(!S.ledgerTxs.length) return `<div class="notice">The Portfolio Ledger has no transactions yet.</div>`;
+  const f = S.txFilters;
+  const stocks = {};
+  for(const t of S.ledgerTxs) stocks[txIsin(t)] = t.name;   // latest name wins
+  const stockList = Object.entries(stocks).sort((a,b)=>a[1].localeCompare(b[1]));
+  const types = [...new Set(S.ledgerTxs.map(t=>t.type))];
+  return `${ledgerErrorBox()}
+  <div class="table-toolbar">
+    <select class="filter-select" onchange="S.txFilters.portfolio=this.value;updateTxns()">
+      ${opt('All',f.portfolio,'All portfolios')}${ledgerPortfolios().map(p=>opt(p,f.portfolio)).join('')}
+    </select>
+    <select class="filter-select" onchange="S.txFilters.isin=this.value;updateTxns()">
+      ${opt('All',f.isin,'All stocks')}${stockList.map(([i,n])=>opt(i,f.isin,n)).join('')}
+    </select>
+    <select class="filter-select" onchange="S.txFilters.type=this.value;updateTxns()">
+      ${opt('All',f.type,'All types')}${types.map(t=>opt(t,f.type)).join('')}
+    </select>
+    <label class="date-lbl">From <input type="date" class="filter-select" value="${esc(f.from)}" onchange="S.txFilters.from=this.value;updateTxns()"></label>
+    <label class="date-lbl">To <input type="date" class="filter-select" value="${esc(f.to)}" onchange="S.txFilters.to=this.value;updateTxns()"></label>
+    <button class="btn btn-ghost btn-sm" onclick="exportTxns()" title="Download the filtered list as Excel">⇩ Excel</button>
+    <button class="btn btn-primary btn-sm" onclick="S.txFilters={portfolio:'All',isin:'All',type:'All',from:'',to:''};render()">✕ Reset</button>
+  </div>
+  <div id="tx-body">${renderTxBody()}</div>`;
+}
+
+function renderTxBody() {
+  const rows = txFiltered();
+  if(!rows.length) return `<div class="no-data">No transactions match these filters.</div>`;
+  const th = (col,lbl) => `<th data-txsort="${col}" class="${S.txSort.col===col?(S.txSort.dir>0?'sorted-asc':'sorted-desc'):''}">${lbl}</th>`;
+  const bought = rows.filter(t=>BUY_TYPES.includes(t.type)).reduce((s,t)=>s+(t.amount||0),0);
+  const sold   = rows.filter(t=>t.type==='Sell').reduce((s,t)=>s+(t.amount||0),0);
+  const chg    = rows.reduce((s,t)=>s+txCharges(t),0);
+  const m = v => v==null ? '<span class="muted">—</span>' : fmtN(v,2);
+  return `<div class="table-wrap"><table><thead><tr>
+    ${th('date','Date')}<th>Portfolio</th>${th('type','Type')}${th('name','Stock')}${th('qty','Qty')}
+    <th>Rate</th>${th('amount','Amount')}<th>Brokerage</th><th>GST</th><th>STT</th><th>Other</th>${th('net','Net Amount')}<th>Trade Rate</th>
+  </tr></thead><tbody>
+  ${rows.map(t=>`<tr>
+    <td class="mono">${fmtDate(t.date)}</td><td>${portLabel(t.portfolio)}</td><td>${typeTag(t.type)}</td>
+    <td class="name-cell" title="${esc(t.isin)}">${esc(t.name)}</td>
+    <td class="mono">${fmtN(t.qty,0)}</td><td class="mono">${m(t.rate)}</td><td class="mono">${m(t.amount)}</td>
+    <td class="mono">${m(t.brokerage)}</td><td class="mono">${m(t.gst)}</td><td class="mono">${m(t.stt)}</td>
+    <td class="mono">${m(t.other)}</td><td class="mono">${m(t.net)}</td><td class="mono">${t.sheetRate!=null?fmtN(t.sheetRate,4):'—'}</td>
+  </tr>`).join('')}
+  </tbody></table>
+  <div class="lot-cards">${rows.map(t=>`<div class="lot-card">
+    <div class="lc-top"><div class="lc-name">${esc(t.name)}</div><div class="lc-pl">${typeTag(t.type)}</div></div>
+    <div class="lc-meta"><span class="port-dot" style="background:${portColor(t.portfolio)}"></span>
+      <span style="color:${portColor(t.portfolio)};font-weight:600">${esc(t.portfolio)}</span> · ${fmtDate(t.date)}</div>
+    <div class="lc-grid">
+      ${lcCell('Qty',fmtN(t.qty,0))}${lcCell('Rate',m(t.rate))}${lcCell('Amount',t.amount!=null?fmtR(t.amount,0):'—')}
+      ${lcCell('Charges',fmtR(txCharges(t)))}${lcCell('of which STT',m(t.stt))}${lcCell('Net',t.net!=null?fmtR(t.net,0):'—')}
+    </div></div>`).join('')}</div>
+  <div class="table-footer">
+    <div>Rows: <span>${rows.length}</span></div>
+    <div>Bought: <span>${fmtR(bought,0)}</span></div>
+    <div>Sold: <span>${fmtR(sold,0)}</span></div>
+    <div>Charges: <span>${fmtR(chg,0)}</span></div>
+  </div></div>`;
+}
+
+function updateTxns() {
+  const el = document.getElementById('tx-body'); if(!el) return;
+  el.innerHTML = renderTxBody();
+  el.querySelectorAll('th[data-txsort]').forEach(th=>th.addEventListener('click',()=>{
+    const col = th.dataset.txsort;
+    S.txSort = S.txSort.col===col ? { col, dir:-S.txSort.dir } : { col, dir:col==='date'?-1:1 };
+    updateTxns();
+  }));
+}
+
+function exportTxns() {
+  const rows = txFiltered(); if(!rows.length) return;
+  exportXlsx('Transactions.xlsx', [['Transactions', rows.map(t=>({
+    'Date':t.date, 'Portfolio':t.portfolio, 'Type':t.type, 'Stock':t.name, 'ISIN':t.isin, 'Qty':t.qty,
+    'Rate':t.rate, 'Amount':t.amount, 'Brokerage':t.brokerage, 'GST':t.gst, 'STT':t.stt,
+    'Other Charges':t.other, 'Net Amount':t.net, 'Trade Rate':t.sheetRate }))]]);
+}
+
+// ═══════════════════════════════════════
+// RENDER
+// ═══════════════════════════════════════
+function render() {
+  document.getElementById('content').innerHTML = renderTxns();
+  updateTxns();   // attaches the sort handlers
+}
+
+initLedgerPage(render);
+</script>
+</body>
+</html>

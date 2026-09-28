@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Capital Gains</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="common.css?v=2">
+</head>
+<body>
+
+<!-- LOADING -->
+<div id="loading">
+  <div class="logo-block">
+    <h1>Portfolio <span>Capital Gains</span></h1>
+    <p>Realised gains from the Portfolio Ledger, by financial year and taxpayer</p>
+  </div>
+  <div class="file-zone">
+    <h3>Live Data</h3>
+    <p>Sign in with the Google account that owns the <strong style="color:var(--text)">Portfolio Ledger</strong> sheet. Data is read straight from Google into this browser — the page itself holds no portfolio data.</p>
+    <div class="load-btn-row">
+      <button class="btn btn-primary" id="btn-google">Sign in with Google →</button>
+    </div>
+  </div>
+  <div id="load-status"></div>
+</div>
+
+<!-- APP -->
+<div id="app" class="hidden">
+  <div class="topbar">
+    <div class="topbar-brand">Portfolio <span>CC</span></div>
+    <div class="nav-tabs">
+      <a class="nav-tab" href="./">Command Center</a>
+      <a class="nav-tab" href="./#positions">Positions</a>
+      <a class="nav-tab" href="./#rotation">Rotation Engine</a>
+      <a class="nav-tab active" href="gains.html">Capital Gains</a>
+      <a class="nav-tab" href="transactions.html">Transactions</a>
+    </div>
+    <div class="topbar-right">
+      <div class="data-badge" id="data-badge">—</div>
+      <button class="btn btn-ghost btn-sm" id="btn-reload">↻ Reload</button>
+    </div>
+  </div>
+  <div id="content"></div>
+</div>
+
+<script src="common.js?v=2"></script>
+<script>
+// Reads the Portfolio Ledger (the permanent record). Loading, FIFO matching
+// and the tax rules are shared with the holdings page: common.js
+Object.assign(S, { cgFilters: { fy:null, taxpayer:'All', portfolio:'All', search:'' } });
+
+// ═══════════════════════════════════════
+// CAPITAL GAINS
+// ═══════════════════════════════════════
+const FLAG_HELP = {
+  'Buy missing': 'No matching purchase in the Portfolio Ledger (history not loaded yet, or a rights / IPO / bonus / split entry is missing). Cost unknown, so it is left out of the totals.',
+  'Intraday':    'Bought and sold on the same day: speculative business income, not capital gains. Left out of the STCG/LTCG totals.',
+  'Pre-2018':    'Bought before 1-Feb-2018, so the 31-Jan-2018 market price (grandfathering) may apply. Shown at actual cost; check before filing.',
+};
+const flagTags = r => r.flags.map(f=>`<span class="tag tag-flag" title="${esc(FLAG_HELP[f])}">${esc(f)}</span>`).join(' ');
+// A row counts towards STCG/LTCG only with a known cost and not intraday
+const inTotals = r => r.gain!=null && !r.flags.includes('Intraday');
+
+function sumGains(rows) {
+  const t = { stcg:0, ltcg:0, sale:0, cost:0, n:0, missing:0 };
+  for(const r of rows) {
+    if(r.flags.includes('Buy missing')) t.missing++;
+    if(!inTotals(r)) continue;
+    t[r.term==='LTCG'?'ltcg':'stcg'] += r.gain; t.sale += r.saleValue; t.cost += r.cost; t.n++;
+  }
+  t.net = t.stcg + t.ltcg;
+  return t;
+}
+
+function cgFiltered() {
+  const f = S.cgFilters, q = f.search.trim().toLowerCase();
+  return S.realised.filter(r => r.fy===f.fy
+    && (f.taxpayer==='All'  || r.taxpayer===f.taxpayer)
+    && (f.portfolio==='All' || r.portfolio===f.portfolio)
+    && (!q || r.name.toLowerCase().includes(q) || r.isin.toLowerCase().includes(q)))
+    .sort((a,b)=> (a.sellDate-b.sellDate) || a.name.localeCompare(b.name) || ((a.buyDate||0)-(b.buyDate||0)));
+}
+
+function renderGains() {
+  if(!S.ledgerTxs.length) return `<div class="notice">The Portfolio Ledger has no transactions yet.</div>`;
+  const fys = [...new Set(S.realised.map(r=>r.fy))].sort().reverse();
+  const f = S.cgFilters;
+  if(!fys.includes(f.fy)) f.fy = fys[0] || null;
+  const ports = ledgerPortfolios();
+  const tps   = [...new Set(ports.map(taxpayerOf))];
+  return `${ledgerErrorBox()}
+  <div class="table-toolbar">
+    <select class="filter-select" onchange="S.cgFilters.fy=this.value;updateGains()">
+      ${fys.length ? fys.map(y=>opt(y,f.fy)).join('') : '<option>No sales yet</option>'}
+    </select>
+    <select class="filter-select" onchange="S.cgFilters.taxpayer=this.value;updateGains()">
+      ${opt('All',f.taxpayer,'All taxpayers')}${tps.map(t=>opt(t,f.taxpayer)).join('')}
+    </select>
+    <select class="filter-select" onchange="S.cgFilters.portfolio=this.value;updateGains()">
+      ${opt('All',f.portfolio,'All portfolios')}${ports.map(p=>opt(p,f.portfolio)).join('')}
+    </select>
+    <input class="search-input" type="text" placeholder="Search stock / ISIN…" value="${esc(f.search)}"
+      oninput="S.cgFilters.search=this.value;updateGains()">
+    <button class="btn btn-ghost btn-sm" onclick="exportGains()" title="Download the filtered report as Excel">⇩ Excel</button>
+    <button class="btn btn-primary btn-sm" onclick="S.cgFilters={fy:null,taxpayer:'All',portfolio:'All',search:''};render()">✕ Reset</button>
+  </div>
+  <div id="cg-body">${renderGainsBody()}</div>`;
+}
+
+function renderGainsBody() {
+  const f = S.cgFilters;
+  if(!f.fy) return `<div class="no-data">No sales recorded in the Portfolio Ledger yet.</div>`;
+  const rows = cgFiltered();
+  if(!rows.length) return `<div class="no-data">No sales in ${esc(f.fy)} match these filters.</div>`;
+
+  // Group: taxpayer → portfolio (Ledger tab order)
+  const order = ledgerPortfolios();
+  const groups = {};
+  for(const r of rows) ((groups[r.taxpayer] ??= {})[r.portfolio] ??= []).push(r);
+  const tpNames = Object.keys(groups).sort((a,b)=>
+    order.findIndex(p=>taxpayerOf(p)===a) - order.findIndex(p=>taxpayerOf(p)===b));
+
+  const missing  = rows.filter(r=>r.flags.includes('Buy missing'));
+  const intraday = rows.filter(r=>r.flags.includes('Intraday'));
+  const pre2018  = rows.filter(r=>r.flags.includes('Pre-2018'));
+  const warn = [];
+  if(missing.length)  warn.push(`<div class="flag-line"><span class="tag tag-flag">Buy missing</span> ${missing.length} sale match${missing.length>1?'es':''} · sale value ${fmtR(missing.reduce((s,r)=>s+r.saleValue,0))} has no purchase in the Ledger, so it is <b>not in the totals</b>. Load the history or add the rights / IPO / bonus / split entry.</div>`);
+  if(intraday.length) warn.push(`<div class="flag-line"><span class="tag tag-flag">Intraday</span> ${intraday.length} same-day match${intraday.length>1?'es':''} · ${gainSpan(intraday.reduce((s,r)=>s+r.gain,0))} is speculative income, <b>not in the STCG/LTCG totals</b>.</div>`);
+  if(pre2018.length)  warn.push(`<div class="flag-line"><span class="tag tag-flag">Pre-2018</span> ${pre2018.length} LTCG match${pre2018.length>1?'es':''} on shares bought before 1-Feb-2018. Grandfathering may apply; shown at actual cost.</div>`);
+
+  const cards = tpNames.map(tp=>{
+    const t = sumGains(Object.values(groups[tp]).flat());
+    return `<div class="stat-card accent-border">
+      <div class="label">${esc(tp)} · ${esc(f.fy)}</div>
+      <div class="value ${t.net>=0?'green':'red'}">${t.net>=0?'+':''}${fmtR(t.net,0)}</div>
+      <div class="cg-split"><span>STCG <b class="${t.stcg>=0?'green':'red'}">${fmtR(t.stcg,0)}</b></span><span>LTCG <b class="${t.ltcg>=0?'green':'red'}">${fmtR(t.ltcg,0)}</b></span></div>
+    </div>`;
+  }).join('');
+
+  const sumRow = (label, t, cls, portfolio) => `<tr class="${cls}">
+    <td>${label}</td><td>${portfolio||''}</td><td class="mono">${t.n}</td>
+    <td class="mono">${t.missing?`<span class="red">${t.missing}</span>`:'<span class="muted">0</span>'}</td>
+    <td class="mono">${fmtR(t.sale)}</td><td class="mono">${fmtR(t.cost)}</td>
+    <td class="mono">${gainSpan(t.stcg)}</td><td class="mono">${gainSpan(t.ltcg)}</td><td class="mono">${gainSpan(t.net)}</td></tr>`;
+  let breakdown = '';
+  for(const tp of tpNames) {
+    const ps = Object.keys(groups[tp]).sort((a,b)=>order.indexOf(a)-order.indexOf(b));
+    for(const p of ps) breakdown += sumRow('', sumGains(groups[tp][p]), '', portLabel(p));
+    breakdown += sumRow(`<b>${esc(tp)}</b>`, sumGains(Object.values(groups[tp]).flat()), 'subtotal', '<span class="muted">Total</span>');
+  }
+
+  return `
+  <div class="dash-grid cg-cards">${cards}</div>
+  ${warn.length?`<div class="flag-box">${warn.join('')}</div>`:''}
+  <div class="section-title">Summary — ${esc(f.fy)}</div>
+  <div class="table-scroll" style="margin-bottom:22px"><table><thead><tr>
+    <th>Taxpayer</th><th>Portfolio</th><th>In Totals</th><th title="Sales with no purchase in the Ledger — not in the totals">Buy Missing</th><th>Sale Value</th><th>Cost</th><th>STCG</th><th>LTCG</th><th>Net Gain</th>
+  </tr></thead><tbody>${breakdown}</tbody></table></div>
+  <div class="section-title">Every sale, matched to its purchase (FIFO)</div>
+  <div class="table-wrap"><table><thead><tr>
+    <th>Stock</th><th>Portfolio</th><th>Buy Date</th><th>Sell Date</th><th>Days</th><th>Qty</th>
+    <th>Buy ₹</th><th>Sell ₹</th><th>Cost</th><th>Sale Value</th><th>Gain</th><th>Term</th><th>Flags</th>
+  </tr></thead><tbody>
+  ${rows.map(r=>`<tr>
+    <td class="name-cell" title="${esc(r.isin)}">${esc(r.name)}</td>
+    <td>${portLabel(r.portfolio)}</td>
+    <td class="mono">${r.buyDate?fmtDate(r.buyDate):'—'}${r.buyType&&r.buyType!=='Buy'?` <span class="muted">(${esc(r.buyType)})</span>`:''}</td>
+    <td class="mono">${fmtDate(r.sellDate)}</td>
+    <td class="mono">${r.days??'—'}</td>
+    <td class="mono">${fmtN(r.qty,0)}</td>
+    <td class="mono">${r.buyRate!=null?fmtN(r.buyRate,2):'—'}</td>
+    <td class="mono">${fmtN(r.saleRate,2)}</td>
+    <td class="mono">${fmtR(r.cost)}</td>
+    <td class="mono">${fmtR(r.saleValue)}</td>
+    <td class="mono">${gainSpan(r.gain)}</td>
+    <td>${r.term==='—'?'—':`<span class="tag tag-${r.term==='STCG'?'stcg':'ltcg'}">${r.term}</span>`}</td>
+    <td>${flagTags(r)}</td>
+  </tr>`).join('')}
+  </tbody></table>
+  <div class="lot-cards">${rows.map(r=>`<div class="lot-card">
+    <div class="lc-top"><div class="lc-name">${esc(r.name)}</div><div class="lc-pl">${gainSpan(r.gain)}</div></div>
+    <div class="lc-meta"><span class="port-dot" style="background:${portColor(r.portfolio)}"></span>
+      <span style="color:${portColor(r.portfolio)};font-weight:600">${esc(r.portfolio)}</span> · sold ${fmtDate(r.sellDate)}</div>
+    <div class="lc-tags">${r.term==='—'?'':`<span class="tag tag-${r.term==='STCG'?'stcg':'ltcg'}">${r.term}</span>`}${flagTags(r)}</div>
+    <div class="lc-grid">
+      ${lcCell('Qty',fmtN(r.qty,0))}${lcCell('Bought',r.buyDate?fmtDate(r.buyDate):'—')}${lcCell('Days',r.days??'—')}
+      ${lcCell('Cost',fmtR(r.cost,0))}${lcCell('Sale value',fmtR(r.saleValue,0))}${lcCell('Sell ₹',fmtN(r.saleRate,2))}
+    </div></div>`).join('')}</div>
+  </div>
+  <div class="table-note">Sale value = sale amount minus every charge except STT; cost = purchase amount plus every charge except STT (stamp duty included). Bonus shares cost ₹0 from the allotment date; splits keep the original date and cost. LTCG = held more than 12 months.</div>`;
+}
+
+function updateGains() {
+  const el = document.getElementById('cg-body'); if(el) el.innerHTML = renderGainsBody();
+}
+
+function exportGains() {
+  const rows = cgFiltered(); if(!rows.length) return;
+  const byPort = {};
+  for(const r of rows) (byPort[r.portfolio] ??= []).push(r);
+  const summary = Object.entries(byPort).map(([p,rs])=>{ const t=sumGains(rs);
+    return { 'Taxpayer':taxpayerOf(p), 'Portfolio':p, 'In Totals':t.n, 'Buy Missing':t.missing, 'Sale Value':r2(t.sale), 'Cost':r2(t.cost),
+             'STCG':r2(t.stcg), 'LTCG':r2(t.ltcg), 'Net Gain':r2(t.net) }; });
+  const details = rows.map(r=>({
+    'Taxpayer':r.taxpayer, 'Portfolio':r.portfolio, 'Stock':r.name, 'ISIN':r.isin,
+    'Acquired As':r.buyType||'', 'Buy Date':r.buyDate, 'Sell Date':r.sellDate, 'Days Held':r.days, 'Qty':r.qty,
+    'Buy Rate (net)':r2(r.buyRate), 'Sell Rate (net)':r2(r.saleRate), 'Cost':r2(r.cost), 'Sale Value':r2(r.saleValue),
+    'Gain':r2(r.gain), 'Term':r.term, 'In Totals':inTotals(r)?'Yes':'No', 'Flags':r.flags.join(', ') }));
+  exportXlsx(`Capital Gains ${S.cgFilters.fy}.xlsx`, [['Summary',summary],['Details',details]]);
+}
+
+// ═══════════════════════════════════════
+// RENDER
+// ═══════════════════════════════════════
+function render() {
+  document.getElementById('content').innerHTML = renderGains();
+}
+
+initLedgerPage(render);
+</script>
+</body>
+</html>
