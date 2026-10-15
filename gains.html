@@ -165,24 +165,38 @@ function renderGainsBody() {
   const open = openRows();
   const curFY = finYear(new Date());
 
-  // One card per person: realised in the chosen FY, unrealised if sold today
+  // Overview table: person → broking account rows, then the person's total.
+  // FIFO itself runs per broking account; these are just sums of its results.
   const order = ledgerPortfolios();
-  const tps = [...new Set([...rows.map(r=>r.taxpayer), ...open.map(r=>r.taxpayer)])]
+  const byTp = {};
+  for(const r of rows) (((byTp[r.taxpayer] ??= {})[r.portfolio] ??= {real:[], open:[]}).real).push(r);
+  for(const r of open) (((byTp[r.taxpayer] ??= {})[r.portfolio] ??= {real:[], open:[]}).open).push(r);
+  const tps = Object.keys(byTp)
     .sort((a,b)=> order.findIndex(p=>taxpayerOf(p)===a) - order.findIndex(p=>taxpayerOf(p)===b));
-  const split = (stcg, ltcg) => `<div class="cg-split"><span>STCG <b class="${stcg>=0?'green':'red'}">${fmtR(stcg,0)}</b></span><span>LTCG <b class="${ltcg>=0?'green':'red'}">${fmtR(ltcg,0)}</b></span></div>`;
-  const cards = tps.map(tp=>{
-    const r = sumGains(rows.filter(x=>x.taxpayer===tp)), u = sumOpen(open.filter(x=>x.taxpayer===tp));
-    return `<div class="stat-card accent-border">
-      <div class="label">${esc(tp)} · realised ${esc(f.fy||'')}</div>
-      <div class="value ${r.net>=0?'green':'red'}">${r.net>=0?'+':''}${fmtR(r.net,0)}</div>${split(r.stcg, r.ltcg)}
-      <div class="label" style="margin-top:12px">Unrealised · if sold today</div>
-      <div class="value ${u.net>=0?'green':'red'}" style="font-size:18px">${u.net>=0?'+':''}${fmtR(u.net,0)}</div>${split(u.stcg, u.ltcg)}
-      ${f.fy===curFY ? `<div class="label" style="margin-top:12px">${esc(curFY)} if everything were sold today</div>${split(r.stcg+u.stcg, r.ltcg+u.ltcg)}` : ''}
-    </div>`;
-  }).join('');
+  const both = f.fy===curFY;   // "if sold today" only adds up within the current FY
+  const g3 = (s, l) => `<td class="mono">${gainSpan(s)}</td><td class="mono">${gainSpan(l)}</td><td class="mono"><b>${gainSpan(s+l)}</b></td>`;
+  const ovRow = (label, acct, real, opn, cls) => { const r = sumGains(real), u = sumOpen(opn);
+    return `<tr class="${cls}"><td>${label}</td><td>${acct}</td>${g3(r.stcg, r.ltcg)}${g3(u.stcg, u.ltcg)}${both ? g3(r.stcg+u.stcg, r.ltcg+u.ltcg) : ''}</tr>`; };
+  let ovBody = '';
+  for(const tp of tps) {
+    const accts = Object.keys(byTp[tp]).sort((a,b)=>order.indexOf(a)-order.indexOf(b));
+    for(const a of accts) ovBody += ovRow('', portLabel(a), byTp[tp][a].real, byTp[tp][a].open, '');
+    ovBody += ovRow(`<b>${esc(tp)}</b>`, '<span class="muted">Total</span>',
+      accts.flatMap(a=>byTp[tp][a].real), accts.flatMap(a=>byTp[tp][a].open), 'subtotal');
+  }
+  const grp = (label, title) => `<th colspan="3" style="text-align:center" title="${esc(title)}">${label}</th>`;
+  const overview = tps.length ? `
+  <div class="section-title">Overview — ${esc(f.fy||'')}</div>
+  <div class="table-scroll" style="margin-bottom:22px"><table><thead>
+    <tr><th rowspan="2">Portfolio</th><th rowspan="2">Broking Account</th>
+      ${grp(`Realised ${esc(f.fy||'')}`, 'Sales already made in this financial year')}
+      ${grp('Unrealised · if sold today', 'Shares still held, at today’s price')}
+      ${both ? grp(`${esc(curFY)} if everything sold today`, 'Realised + unrealised') : ''}</tr>
+    <tr>${'<th>STCG</th><th>LTCG</th><th>Net</th>'.repeat(both ? 3 : 2)}</tr>
+  </thead><tbody>${ovBody}</tbody></table></div>` : '';
 
   return `
-  ${cards ? `<div class="dash-grid cg-cards">${cards}</div>` : ''}
+  ${overview}
   ${renderRealised(rows)}
   ${renderOpen(open)}`;
 }
