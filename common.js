@@ -339,13 +339,33 @@ async function fetchWorkbook(sheetId, token, label, onlyTabs) {
   return wb;
 }
 
+// Current price per ISIN, same sources as the holdings page: a portfolio tab's
+// "Current Price" column first, else SCREENER_ALL STKS.
+function parseCurrentPrices(wb) {
+  const prices = {};
+  const take = (tab, isinCol, priceCol, override) => {
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[tab], {header:1, defval:null, raw:true});
+    const H = (rows[0]||[]).map(h => String(h??'').trim());
+    const ci = H.indexOf(isinCol), cp = H.indexOf(priceCol);
+    if(ci<0 || cp<0) return;
+    for(let i=1; i<rows.length; i++) {
+      const r = rows[i]||[], isin = String(r[ci]??'').trim(), p = r[cp];
+      if(isin && typeof p==='number' && p>0 && (override || prices[isin]==null)) prices[isin] = p;
+    }
+  };
+  if(wb.Sheets['SCREENER_ALL STKS']) take('SCREENER_ALL STKS', 'ISIN Code', 'Current Price', false);
+  for(const t of wb.SheetNames) if(t!=='SCREENER_ALL STKS') take(t, 'ISIN No.', 'Current Price', true);
+  return prices;
+}
+
 // For the Ledger pages: the Ledger itself, plus only what they need from the
-// Live sheet (ISIN aliases, and tab order for portfolio colours).
-async function loadLedgerData() {
+// Live sheet (ISIN aliases, and tab order for portfolio colours). withPrices
+// also reads current prices, for unrealised gains on the lots still held.
+async function loadLedgerData(withPrices) {
   setStatus('Signing in…');
   const token = await getToken();
   setStatus('Fetching ledger…');
-  const live   = await fetchWorkbook(SHEET_ID,  token, 'portfolio sheet', ['ISIN Aliases']);
+  const live   = await fetchWorkbook(SHEET_ID,  token, 'portfolio sheet', withPrices ? null : ['ISIN Aliases']);
   const ledger = await fetchWorkbook(LEDGER_ID, token, 'Portfolio Ledger');
   S.isinAliases = {};
   parseIsinAliases(live);
@@ -353,12 +373,15 @@ async function loadLedgerData() {
   S.portfolios   = live.AllTabs.filter(t => ledger.SheetNames.includes(t));
   S.ledgerTxs    = txs;
   S.ledgerErrors = errors;
-  S.realised     = runFIFO(txs).realised;   // unmatched sells come back as "Buy missing" rows
+  const fifo     = runFIFO(txs);
+  S.realised     = fifo.realised;   // unmatched sells come back as "Buy missing" rows
+  S.openLots     = fifo.openLots;
+  S.currentPrices = withPrices ? parseCurrentPrices(live) : {};
 }
 
 // Sign-in screen → page, for the Ledger pages. render() draws #content.
-function initLedgerPage(render) {
-  const run = () => loadLedgerData().then(() => {
+function initLedgerPage(render, withPrices) {
+  const run = () => loadLedgerData(withPrices).then(() => {
     document.getElementById('loading').classList.add('hidden');
     document.getElementById('app').classList.remove('hidden');
     document.getElementById('data-badge').innerHTML = `<span>${S.ledgerTxs.length}</span> ledger rows`;
