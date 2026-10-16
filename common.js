@@ -389,9 +389,15 @@ function parseLivePrices(wb) {
     const num = v => typeof v==='number' ? v : null;
     out.byIsin[isin] = { ltp, prevClose:num(r[cp]), chg:num(r[cc]), chgPct:num(r[cpc]) };
   }
-  // asOf is "dd-mm-yyyy HH:mm": compare as yyyymmddHHmm, not as text
+  // asOf is "dd-mm-yyyy HH:mm": compare as yyyymmddHHmm, not as text. Sheets
+  // may have turned the text into a date serial (wall-clock time, as written).
+  const stamp = v => {
+    if(typeof v!=='number') return String(v??'').trim();
+    const d = new Date(Math.round((v-25569)*1440)*60000);
+    return `${pad2(d.getUTCDate())}-${pad2(d.getUTCMonth()+1)}-${d.getUTCFullYear()} ${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}`;
+  };
   const key = s => s.replace(/^(\d{2})-(\d{2})-(\d{4}) (\d{2}):(\d{2})$/, '$3$2$1$4$5');
-  out.asOf = Object.keys(out.byIsin).length ? rows.slice(1).map(r => cu>=0 ? String(r[cu]??'') : '')
+  out.asOf = Object.keys(out.byIsin).length ? rows.slice(1).map(r => cu>=0 ? stamp(r[cu]) : '')
     .filter(Boolean).sort((a,b) => key(a)<key(b)?1:-1)[0] || '' : '';
   for(const r of rows) if(String(r[12]??'').trim()==='Web app') {
     const u = String(r[13]??'').trim();
