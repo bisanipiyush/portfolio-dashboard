@@ -369,11 +369,13 @@ function parseCurrentPrices(wb) {
 // LIVE PRICES ("Prices" tab, written by the sheet's Apps Script)
 // ═══════════════════════════════════════
 // byIsin: ISIN → {ltp, prevClose, chg, chgPct}; asOf: "dd-mm-yyyy HH:mm" (IST)
-// of the last successful refresh, or '' when the tab is missing or empty.
+// of the last successful refresh, or '' when the tab is missing or empty;
+// pingUrl: the script's web-app address (Prices!N3), '' until it is deployed.
 const PRICES_TAB = 'Prices';
-const PRICE_REFRESH_MS = 10*60*1000;
+const PRICE_REFRESH_MS = 5*60*1000;
+const PING_WAIT_MS = 20*1000;   // a fetch takes a few seconds; re-read after this
 function parseLivePrices(wb) {
-  const out = { byIsin:{}, asOf:'' };
+  const out = { byIsin:{}, asOf:'', pingUrl:'' };
   const ws = wb.Sheets[PRICES_TAB];
   if(!ws) return out;
   const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:null, raw:true});
@@ -386,7 +388,14 @@ function parseLivePrices(wb) {
     if(!isin || typeof ltp!=='number' || ltp<=0) continue;
     const num = v => typeof v==='number' ? v : null;
     out.byIsin[isin] = { ltp, prevClose:num(r[cp]), chg:num(r[cc]), chgPct:num(r[cpc]) };
-    if(cu>=0 && r[cu] && String(r[cu])>out.asOf) out.asOf = String(r[cu]);
+  }
+  // asOf is "dd-mm-yyyy HH:mm": compare as yyyymmddHHmm, not as text
+  const key = s => s.replace(/^(\d{2})-(\d{2})-(\d{4}) (\d{2}):(\d{2})$/, '$3$2$1$4$5');
+  out.asOf = Object.keys(out.byIsin).length ? rows.slice(1).map(r => cu>=0 ? String(r[cu]??'') : '')
+    .filter(Boolean).sort((a,b) => key(a)<key(b)?1:-1)[0] || '' : '';
+  for(const r of rows) if(String(r[12]??'').trim()==='Web app') {
+    const u = String(r[13]??'').trim();
+    if(/^https:\/\/script\.google\.com\//.test(u)) out.pingUrl = u;
   }
   return out;
 }
@@ -405,22 +414,34 @@ function priceAgeHtml(asOf) {
   return `<span title="Live prices from Angel One, updated ${esc(asOf)}"${stale?' style="color:var(--orange)"':''}>prices ${label}${stale?' ⚠':''}</span>`;
 }
 
-// Re-reads only the Prices tab every 10 minutes while the page is open (and
-// when a hidden tab comes back into view after that long). onUpdate(live)
-// gets the parsed tab. Never opens a sign-in pop-up: once the hour-long
-// token expires it stops quietly until the page is reloaded.
-function startPriceRefresh(onUpdate) {
+// While the page is open: "ping" the sheet's script (its web app) when the
+// page opens and every 5 minutes, so it fetches fresh prices from Angel One,
+// then re-read only the Prices tab 20 seconds later. Without the web app it
+// just re-reads every 5 minutes (the script then fetches every 20). Also runs
+// when a hidden tab comes back into view after 5 minutes. onUpdate(live) gets
+// the parsed tab. Never opens a sign-in pop-up: once the hour-long token
+// expires it stops quietly until the page is reloaded. The ping sends
+// nothing and gets nothing back (no-cors): it only asks for a refresh.
+function startPriceRefresh(onUpdate, pingUrl) {
   if(startPriceRefresh.started) return;
   startPriceRefresh.started = true;
-  let last = Date.now();
-  const tick = async () => {
+  let last = Date.now(), url = pingUrl || '';
+  const ping = () => { if(url) fetch(url, { mode:'no-cors', cache:'no-store' }).catch(() => {}); };
+  const read = async () => {
     if(!hasValidToken()) return;
-    last = Date.now();
     try {
       const wb = await fetchWorkbook(SHEET_ID, gToken.access_token, 'portfolio sheet', [PRICES_TAB]);
-      onUpdate(parseLivePrices(wb));
+      const live = parseLivePrices(wb);
+      if(live.pingUrl) url = live.pingUrl;
+      onUpdate(live);
     } catch(e) { console.warn('Price refresh failed:', e.message); }
   };
+  const tick = () => {
+    if(!hasValidToken()) return;
+    last = Date.now();
+    if(url) { ping(); setTimeout(read, PING_WAIT_MS); } else read();
+  };
+  if(url) { ping(); setTimeout(read, PING_WAIT_MS); }   // page just opened: fresh prices in ~20 s
   setInterval(() => { if(document.visibilityState==='visible') tick(); }, PRICE_REFRESH_MS);
   document.addEventListener('visibilitychange', () => {
     if(document.visibilityState==='visible' && Date.now()-last >= PRICE_REFRESH_MS) tick();
@@ -446,7 +467,9 @@ async function loadLedgerData(withPrices) {
   S.realised     = fifo.realised;   // unmatched sells come back as "Buy missing" rows
   S.openLots     = fifo.openLots;
   S.currentPrices = withPrices ? parseCurrentPrices(live) : {};
-  S.pricesAsOf    = withPrices ? parseLivePrices(live).asOf : '';
+  const lp        = withPrices ? parseLivePrices(live) : { asOf:'', pingUrl:'' };
+  S.pricesAsOf    = lp.asOf;
+  S.pricePingUrl  = lp.pingUrl;
 }
 
 // Sign-in screen → page, for the Ledger pages. render() draws #content.
@@ -463,7 +486,7 @@ function initLedgerPage(render, withPrices) {
       for(const [isin, p] of Object.entries(live.byIsin)) S.currentPrices[isin] = p.ltp;
       if(live.asOf) S.pricesAsOf = live.asOf;
       badge(); render();
-    });
+    }, S.pricePingUrl);
     // On a phone the tab row scrolls sideways — bring this page's tab into view
     document.querySelector('.nav-tab.active')?.scrollIntoView({ inline:'center', block:'nearest' });
   });

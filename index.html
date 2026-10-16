@@ -8,6 +8,33 @@
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="common.css?v=2">
+<style>
+/* Positions header (tap targets) and allocation panel */
+.pos-head{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0 0 12px}
+.ph-block{all:unset;box-sizing:border-box;cursor:pointer;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:1px}
+.ph-block:hover,.ph-block:focus-visible{border-color:var(--accent)}
+.ph-right{text-align:right;align-items:flex-end}
+.ph-k{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px}
+.ph-tap{color:var(--accent);font-size:11px}
+.ph-v{font-family:var(--mono);font-size:20px;font-weight:600;margin-bottom:6px}
+.ph-v2{font-family:var(--mono);font-size:14px}
+.ph-v.green,.ph-v2.green{color:var(--green)} .ph-v.red,.ph-v2.red{color:var(--red)}
+.lc-gk{font-size:9.5px;color:var(--muted);text-align:right}
+.sort-ctl{display:inline-flex;gap:6px;align-items:center}
+.alloc-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:200;padding:16px}
+.alloc-panel{background:var(--surface);border:1px solid var(--border);border-radius:14px;width:100%;max-width:520px;max-height:85vh;display:flex;flex-direction:column}
+.alloc-head{display:flex;justify-content:space-between;align-items:flex-start;padding:14px 16px;border-bottom:1px solid var(--border)}
+.alloc-title{font-weight:600;font-size:14px}.alloc-sub{color:var(--muted);font-size:11px}
+.alloc-close{all:unset;cursor:pointer;font-size:16px;color:var(--muted);padding:2px 6px}
+.alloc-list{overflow-y:auto;padding:6px 16px 14px}
+.alloc-row{display:grid;grid-template-columns:1fr auto;gap:2px 10px;padding:8px 0;border-bottom:1px solid var(--border)}
+.alloc-name{font-size:12.5px}.alloc-pct{font-family:var(--mono);font-weight:600;text-align:right}
+.alloc-bar{height:6px;background:var(--surface2);border-radius:3px;overflow:hidden}
+.alloc-bar span{display:block;height:100%;background:var(--accent);border-radius:3px}
+.alloc-val{font-family:var(--mono);font-size:11px;color:var(--muted);text-align:right}
+@media (max-width:700px){ .ph-v{font-size:17px} .ph-v2{font-size:12.5px} .ph-block{padding:10px 12px}
+  .sort-ctl{grid-column:1/-1;display:flex;width:100%} .sort-ctl select{flex:1;min-width:0} .sort-ctl .btn{white-space:nowrap} }
+</style>
 </head>
 <body>
 
@@ -60,7 +87,7 @@
   <div id="content"></div>
 </div>
 
-<script src="common.js?v=5"></script>
+<script src="common.js?v=6"></script>
 <script>
 // ═══════════════════════════════════════
 // STATE
@@ -77,6 +104,7 @@ Object.assign(S, {
   settings:  { Fundamental: {}, EST: {}, SME: {}, Others: {} },
   activeTab:   'dashboard',
   posView:     'lot',
+  gainMode:    'today',   // Positions header + cards: 'today' | 'unreal' (tap to switch)
   filters:     { portfolio:'All', bucket:'All', tax:'All', status:'All', search:'' },
   sortCol:     'buyDate',
   sortDir:     1,
@@ -309,7 +337,7 @@ async function loadSheet() {
     S.openLots = enrich(S.rawLots);
     updateBadge();
     if(S.activeTab==='positions') updateTable(); else renderContent();
-  });
+  }, S.livePrices.pingUrl);
 }
 
 document.getElementById('btn-google').addEventListener('click', () => {
@@ -548,14 +576,19 @@ function filteredLots() {
     const q=f.search.toLowerCase();
     lots=lots.filter(l=>l.name.toLowerCase().includes(q)||l.isin.toLowerCase().includes(q));
   }
-  lots.sort((a,b)=>{
+  return sortRows(lots);
+}
+
+// Sort lots or stock rows by S.sortCol / S.sortDir; blanks always last.
+function sortRows(rows) {
+  return rows.sort((a,b)=>{
     let av=a[S.sortCol], bv=b[S.sortCol];
     if(av instanceof Date) av=av.getTime();
     if(bv instanceof Date) bv=bv.getTime();
+    if(typeof av==='string') { av=av.toLowerCase(); bv=String(bv??'').toLowerCase(); }
     if(av==null) return 1; if(bv==null) return -1;
     return (av>bv?1:av<bv?-1:0)*S.sortDir;
   });
-  return lots;
 }
 
 function summaryRows(lots) {
@@ -566,7 +599,7 @@ function summaryRows(lots) {
       isin:l.isin, name:l.name,
       bucket:l.bucket, taxSet:new Set(), statusSet:new Set(),
       qty:0, invested:0, currValue:0, currentPrice:null,
-      buyDates:[], pe:l.pe, roce:l.roce, dayPct:null,
+      buyDates:[], pe:l.pe, roce:l.roce, dayPct:null, dayChg:null,
     };
     const s=map[k];
     s.qty      += l.qty;
@@ -575,7 +608,7 @@ function summaryRows(lots) {
     s.taxSet.add(l.taxType);
     s.buyDates.push(l.buyDate);
     if(l.currentPrice) s.currentPrice=l.currentPrice;
-    if(l.dayPct!=null) s.dayPct=l.dayPct;   // same stock, same day move
+    if(l.dayChg!=null) { s.dayChg=(s.dayChg||0)+l.dayChg; s.dayPct=l.dayPct; }   // same stock, same day %
     if(l.status) s.statusSet.add(l.status);
     if(l.bucket) s.bucket=l.bucket;
   }
@@ -606,11 +639,15 @@ const plCell = (pl,pct) => pl==null ? '—' :
 const lcPl = (pl,pct) => pl==null ? '<span class="muted">—</span>' :
   `<span class="${pl>=0?'pl-pos':'pl-neg'}">${pl>=0?'+':''}${fmtL(pl)}<small>${pct>=0?'+':''}${fmtN(pct,1)}%</small></span>`;
 
+// Card corner: today's move or unrealised gain, whichever the header shows
+const lcGain = x => `<div class="lc-pl"><div class="lc-gk">${S.gainMode==='today'?"Today's gain":'Unrealised'}</div>${
+  S.gainMode==='today' ? lcPl(x.dayChg,x.dayPct) : lcPl(x.pl,x.plPct)}</div>`;
+
 function lotCard(l) {
   return `<div class="lot-card">
     <div class="lc-top">
       <div class="lc-name"><a href="${scrUrl(l.isin)}" target="_blank">${esc(l.name)}</a></div>
-      <div class="lc-pl">${lcPl(l.pl,l.plPct)}</div>
+      ${lcGain(l)}
     </div>
     <div class="lc-meta">
       <span class="port-dot" style="background:${portColor(l.portfolio)}"></span>
@@ -629,7 +666,7 @@ function summaryCard(r) {
   return `<div class="lot-card">
     <div class="lc-top">
       <div class="lc-name"><a href="${scrUrl(r.isin)}" target="_blank">${esc(r.name)}</a></div>
-      <div class="lc-pl">${lcPl(r.pl,r.plPct)}</div>
+      ${lcGain(r)}
     </div>
     <div class="lc-tags">${statusTag(r.status)}<span class="tag tag-${r.taxType.includes('STCG')?'stcg':'ltcg'}">${r.taxType}</span>${bucketTag(r.bucket)}</div>
     <div class="lc-grid">
@@ -652,6 +689,7 @@ function renderLotTable(lots) {
     ${sortTh('qty','Qty')}
     <th>Buy ₹</th>
     <th>CMP</th>
+    ${sortTh('dayChg','Today')}
     ${sortTh('invested','Invested')}
     ${sortTh('currValue','Curr Val')}
     ${sortTh('pl','P&L')}
@@ -675,6 +713,7 @@ function renderLotTable(lots) {
     <td class="mono">${fmtN(l.qty,0)}</td>
     <td class="mono">${fmtN(l.tradeRate,2)}</td>
     <td class="mono">${l.currentPrice?fmtN(l.currentPrice,2)+dayTag(l.dayPct):'<span class="muted">—</span>'}</td>
+    <td class="mono">${plCell(l.dayChg,l.dayPct)}</td>
     <td class="mono">${fmtL(l.invested)}</td>
     <td class="mono">${l.currValue?fmtL(l.currValue):'<span class="muted">—</span>'}</td>
     <td class="mono">${plCell(l.pl,l.plPct)}</td>
@@ -696,7 +735,7 @@ function renderLotTable(lots) {
 }
 
 function renderSummaryTable(lots) {
-  const rows = summaryRows(lots);
+  const rows = sortRows(summaryRows(lots));
   if(!rows.length) return `<div class="no-data">No positions match.</div>`;
   const ti=rows.reduce((s,r)=>s+r.invested,0);
   const tc=rows.reduce((s,r)=>s+r.currValue,0);
@@ -705,6 +744,7 @@ function renderSummaryTable(lots) {
     ${sortTh('name','Stock')}
     ${sortTh('qty','Total Qty')}
     <th>Avg Cost</th><th>CMP</th>
+    ${sortTh('dayChg','Today')}
     ${sortTh('invested','Invested')}
     ${sortTh('currValue','Curr Val')}
     ${sortTh('pl','P&L')}
@@ -719,6 +759,7 @@ function renderSummaryTable(lots) {
     <td class="mono">${fmtN(r.qty,0)}</td>
     <td class="mono">${fmtN(r.avgRate,2)}</td>
     <td class="mono">${r.currentPrice?fmtN(r.currentPrice,2)+dayTag(r.dayPct):'<span class="muted">—</span>'}</td>
+    <td class="mono">${plCell(r.dayChg,r.dayPct)}</td>
     <td class="mono">${fmtL(r.invested)}</td>
     <td class="mono">${fmtL(r.currValue)}</td>
     <td class="mono">${plCell(r.pl,r.plPct)}</td>
@@ -746,14 +787,71 @@ function attachSortHandlers() {
   document.querySelectorAll('thead th[data-sort]').forEach(th=>{
     th.addEventListener('click',()=>{
       const col=th.dataset.sort;
-      if(S.sortCol===col) S.sortDir*=-1;
-      else { S.sortCol=col; S.sortDir=1; }
-      updateTable();
+      if(S.sortCol===col) flipSort(); else setSort(col);
     });
   });
 }
 
+// ── Positions header (like MProfit): current value / invested on the left
+// (tap → each stock's share of current value); gain on the right (tap →
+// switches between today's gain and unrealised gain). Uses the filtered lots.
+function posTotals(lots) {
+  const inv = lots.reduce((s,l)=>s+l.invested,0);
+  const cur = lots.reduce((s,l)=>s+(l.currValue??l.invested),0);
+  const dl  = lots.filter(l=>l.dayChg!=null);
+  const day = dl.reduce((s,l)=>s+l.dayChg,0);
+  const dayBase = dl.reduce((s,l)=>s+(l.currValue-l.dayChg),0);
+  return { inv, cur, pl:cur-inv, plPct:inv>0?(cur-inv)/inv*100:0, day, dayPct:dayBase>0?day/dayBase*100:null, live:dl.length };
+}
+const rs = n => (n<0?'-':'')+'₹'+fmtN(Math.abs(n),0);
+function renderPosHeader(lots) {
+  const t = posTotals(lots), today = S.gainMode==='today';
+  const g = today ? t.day : t.pl, gp = today ? t.dayPct : t.plPct, cls = g>=0?'green':'red';
+  const sign = n => n>=0?'+':'';
+  return `<div class="pos-head">
+    <button class="ph-block" onclick="showAllocation()" title="Each stock as a % of current value">
+      <div class="ph-k">Current Value <span class="ph-tap">◔</span></div>
+      <div class="ph-v">${rs(t.cur)}</div>
+      <div class="ph-k">Amt. Invested</div>
+      <div class="ph-v2">${rs(t.inv)}</div>
+    </button>
+    <button class="ph-block ph-right" onclick="toggleGainMode()" title="Switch between today's gain and unrealised gain">
+      <div class="ph-k">${today?"Today's Gain %":'Unrealised Gain %'} <span class="ph-tap">⇄</span></div>
+      <div class="ph-v ${cls}">${gp==null?'—':sign(gp)+fmtN(gp,2)+'%'}</div>
+      <div class="ph-k">${today?"Today's Gain":'Unrealised Gain'}</div>
+      <div class="ph-v2 ${cls}">${today&&!t.live?'—':sign(g)+rs(g)}</div>
+    </button>
+  </div>`;
+}
+function toggleGainMode() { S.gainMode = S.gainMode==='today' ? 'unreal' : 'today'; updateTable(); }
+
+// Each stock's share of current value (filtered set), largest first
+function showAllocation() {
+  const rows = summaryRows(filteredLots()).sort((a,b)=>b.currValue-a.currValue);
+  const tot  = rows.reduce((s,r)=>s+r.currValue,0);
+  const top  = rows.length && tot>0 ? rows[0].currValue/tot*100 : 0;
+  const ov = document.createElement('div');
+  ov.className = 'alloc-overlay';
+  ov.innerHTML = `<div class="alloc-panel" role="dialog" aria-label="Allocation by stock">
+    <div class="alloc-head"><div><div class="alloc-title">Allocation by stock</div>
+      <div class="alloc-sub">${rows.length} stocks · ${rs(tot)} current value</div></div>
+      <button class="alloc-close" aria-label="Close">✕</button></div>
+    <div class="alloc-list">${rows.map(r=>{ const p = tot>0 ? r.currValue/tot*100 : 0; return `
+      <div class="alloc-row"><div class="alloc-name">${esc(r.name)}</div><div class="alloc-pct">${fmtN(p,1)}%</div>
+        <div class="alloc-bar"><span style="width:${top>0?p/top*100:0}%"></span></div>
+        <div class="alloc-val">${rs(r.currValue)}</div></div>`; }).join('')}</div>
+  </div>`;
+  const onKey = e => { if(e.key==='Escape') close(); };
+  const close = () => { ov.remove(); document.removeEventListener('keydown', onKey); };
+  ov.addEventListener('click', e => { if(e.target===ov || e.target.closest('.alloc-close')) close(); });
+  document.addEventListener('keydown', onKey);
+  document.body.appendChild(ov);
+}
+
 function updateTable() {
+  const h=document.getElementById('pos-head'); if(h) h.innerHTML = renderPosHeader(filteredLots());
+  const sc=document.getElementById('sort-col'); if(sc) sc.value = S.sortCol;
+  const sd=document.getElementById('sort-dir'); if(sd) sd.textContent = S.sortDir>0 ? '↑ Up' : '↓ Down';
   const c=document.getElementById('pos-table'); if(!c) return;
   c.innerHTML = S.posView==='lot'
     ? renderLotTable(filteredLots())
@@ -772,12 +870,14 @@ function resetFilters() {
   renderContent(); // re-render whole positions section to reset all dropdowns
 }
 
-// Phone has no clickable column headers, so sorting is a drop-down there.
-const MOBILE_SORTS = [
-  ['buyDate|1','Oldest first'], ['buyDate|-1','Newest first'],
-  ['pl|-1','Biggest gain'], ['pl|1','Biggest loss'],
-  ['invested|-1','Largest invested'], ['name|1','Name A–Z'],
+// Sort choices (column headers are also clickable on a wide screen)
+const SORTS = [
+  ['name','Stock name'], ['invested','Amount invested'], ['currValue','Current value'],
+  ['dayChg',"Today's gain"], ['dayPct',"Today's gain %"],
+  ['pl','Unrealised gain'], ['plPct','Unrealised gain %'], ['buyDate','Buy date'],
 ];
+function setSort(col) { if(col!==S.sortCol) { S.sortCol=col; S.sortDir = col==='name'||col==='buyDate' ? 1 : -1; } updateTable(); }
+function flipSort() { S.sortDir*=-1; updateTable(); }
 
 function renderPositions() {
   const portfolios = ['All',...new Set(S.openLots.map(l=>l.portfolio))];
@@ -808,11 +908,12 @@ function renderPositions() {
       <option value="Exit"${f.status==='Exit'?' selected':''}>Exit</option>
       <option value="Exit Watch"${f.status==='Exit Watch'?' selected':''}>Exit Watch</option>
     </select>
-    <select class="filter-select mobile-only" onchange="const [c,d]=this.value.split('|');S.sortCol=c;S.sortDir=+d;updateTable()">
-      ${MOBILE_SORTS.map(([v,lbl])=>`<option value="${v}"${v===S.sortCol+'|'+S.sortDir?' selected':''}>${lbl}</option>`).join('')}
-    </select>
+    <span class="sort-ctl"><select id="sort-col" class="filter-select" onchange="setSort(this.value)" aria-label="Sort by">
+      ${SORTS.map(([v,lbl])=>`<option value="${v}"${v===S.sortCol?' selected':''}>Sort: ${lbl}</option>`).join('')}
+    </select><button id="sort-dir" class="btn btn-ghost btn-sm" onclick="flipSort()" title="Reverse the order">${S.sortDir>0?'↑ Up':'↓ Down'}</button></span>
     <button class="btn btn-primary btn-sm" onclick="resetFilters()" title="Clear all filters">✕ Reset</button>
   </div>
+  <div id="pos-head">${renderPosHeader(filteredLots())}</div>
   <div id="pos-table">
     ${S.posView==='lot'?renderLotTable(filteredLots()):renderSummaryTable(filteredLots())}
   </div>`;
