@@ -101,7 +101,7 @@ Object.assign(S, {
   stockMeta: {},   // ISIN → {name, bucket, smeCat}
   // Caps come only from the Settings tab — the page is public, so no
   // personal figures live in its code. A bucket without one shows "No cap set".
-  settings:  { Fundamental: {}, EST: {}, SME: {}, Others: {} },
+  settings:  { Fundamental: {}, EST: {}, 'SME Reversal / IPO': {}, Others: {} },
   activeTab:   'dashboard',
   posView:     'lot',
   gainMode:    'today',   // Positions header + cards: 'today' | 'unreal' (tap to switch)
@@ -113,7 +113,8 @@ Object.assign(S, {
   source:      null,   // 'file' | 'sheet' — what ↻ Reload re-reads
 });
 
-const BUCKETS = ['Fundamental','EST','SME','Others'];
+// "SME" renamed to "SME Reversal / IPO" in Stock Details + Settings (Piyush, 16-10-2026).
+const BUCKETS = ['Fundamental','EST','SME Reversal / IPO','Others'];
 
 // Screener URL — search by stock name
 const scrUrl = isin => {
@@ -124,8 +125,8 @@ const scrUrl = isin => {
 };
 
 // Bucket colour class
-const bucketClass = b => ({Fundamental:'fundamental',EST:'est',SME:'sme-b',Others:'others'}[b]||'unassigned');
-const bucketNameClass = b => 'bname-'+(b||'unassigned').toLowerCase().replace(/\s/g,'-');
+const bucketClass = b => ({Fundamental:'fundamental',EST:'est','SME Reversal / IPO':'sme-b',Others:'others'}[b]||'unassigned');
+const bucketNameClass = b => b==='SME Reversal / IPO' ? 'bname-sme' : 'bname-'+(b||'unassigned').toLowerCase().replace(/\s/g,'-');
 
 // Bucket tag HTML
 const bucketTag = b => {
@@ -463,7 +464,7 @@ function renderDashboard() {
   const bucketFills = {
     Fundamental:'',
     EST:'prog-fill-est',
-    SME:'prog-fill-sme',
+    'SME Reversal / IPO':'prog-fill-sme',
     Others:'prog-fill-others',
   };
 
@@ -923,7 +924,7 @@ function renderPositions() {
 // ROTATION ENGINE
 // ═══════════════════════════════════════
 const bucketActiveClass = b => ({
-  Fundamental:'active-fund',EST:'active-est',SME:'active-sme',Others:'active-others'
+  Fundamental:'active-fund',EST:'active-est','SME Reversal / IPO':'active-sme',Others:'active-others'
 }[b]||'');
 
 function renderRotation() {
