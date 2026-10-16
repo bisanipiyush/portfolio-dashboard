@@ -420,6 +420,18 @@ function priceAgeHtml(asOf) {
   return `<span title="Live prices from Angel One, updated ${esc(asOf)}"${stale?' style="color:var(--orange)"':''}>prices ${label}${stale?' ⚠':''}</span>`;
 }
 
+// "prices 11:35" next to the Reload button, on every screen size (the lot
+// badge beside it is hidden on phones). Created on first use.
+function showPriceAge(asOf) {
+  let el = document.getElementById('price-age');
+  if(!el) {
+    const right = document.querySelector('#app .topbar-right'); if(!right) return;
+    el = document.createElement('span'); el.id = 'price-age'; el.className = 'price-age';
+    right.insertBefore(el, right.firstChild);
+  }
+  el.innerHTML = priceAgeHtml(asOf);
+}
+
 // While the page is open: "ping" the sheet's script (its web app) when the
 // page opens and every 5 minutes, so it fetches fresh prices from Angel One,
 // then re-read only the Prices tab 20 seconds later. Without the web app it
@@ -484,14 +496,15 @@ function initLedgerPage(render, withPrices) {
     document.getElementById('loading').classList.add('hidden');
     document.getElementById('app').classList.remove('hidden');
     const badge = () => document.getElementById('data-badge').innerHTML =
-      `<span>${S.ledgerTxs.length}</span> ledger rows` + (withPrices ? ` · ${priceAgeHtml(S.pricesAsOf)}` : '');
-    badge();
+      `<span>${S.ledgerTxs.length}</span> ledger rows`;
+    const badgeAll = () => { badge(); if(withPrices) showPriceAge(S.pricesAsOf); };
+    badgeAll();
     render();
     // Unrealised gains follow the live prices while the page stays open
     if(withPrices) startPriceRefresh(live => {
       for(const [isin, p] of Object.entries(live.byIsin)) S.currentPrices[isin] = p.ltp;
       if(live.asOf) S.pricesAsOf = live.asOf;
-      badge(); render();
+      badgeAll(); render();
     }, S.pricePingUrl);
     // On a phone the tab row scrolls sideways — bring this page's tab into view
     document.querySelector('.nav-tab.active')?.scrollIntoView({ inline:'center', block:'nearest' });

@@ -49,6 +49,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:12
 .topbar-right{display:flex;align-items:center;gap:10px;margin-left:auto;flex-shrink:0}
 .data-badge{font-size:10px;color:var(--muted);padding:3px 10px;border:1px solid var(--border);border-radius:20px;font-family:var(--mono)}
 .data-badge span{color:var(--green)}
+.price-age{font-size:10.5px;color:var(--muted);font-family:var(--mono);white-space:nowrap}
 
 /* ── ERROR PANEL ── */
 #error-panel{margin:14px 20px 0;display:none}

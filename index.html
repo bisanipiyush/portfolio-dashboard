@@ -7,7 +7,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="common.css?v=2">
+<link rel="stylesheet" href="common.css?v=3">
 <style>
 /* Positions header (tap targets) and allocation panel */
 .pos-head{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0 0 12px}
@@ -87,7 +87,7 @@
   <div id="content"></div>
 </div>
 
-<script src="common.js?v=7"></script>
+<script src="common.js?v=8"></script>
 <script>
 // ═══════════════════════════════════════
 // STATE
@@ -386,8 +386,8 @@ function updateBadge() {
   const stocks  = new Set(S.openLots.map(l=>l.isin)).size;
   const priced  = S.openLots.filter(l=>l.currentPrice).length;
   document.getElementById('data-badge').innerHTML =
-    `<span>${lots}</span> lots · <span>${stocks}</span> stocks · <span>${priced}</span> priced`
-    + (S.source==='sheet' ? ` · ${priceAgeHtml(S.livePrices.asOf)}` : '');
+    `<span>${lots}</span> lots · <span>${stocks}</span> stocks · <span>${priced}</span> priced`;
+  if(S.source==='sheet') showPriceAge(S.livePrices.asOf);
 }
 
 function showApp() {
