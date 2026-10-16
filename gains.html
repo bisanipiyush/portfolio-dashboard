@@ -8,6 +8,12 @@
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="common.css?v=2">
+<style>
+/* Capital-gains overview: compact enough for a phone without sideways scrolling */
+.cg-ov th,.cg-ov td{padding:7px 8px;white-space:nowrap}
+.cg-ov td.blk{white-space:normal;width:120px;font-weight:600;vertical-align:middle}
+@media(max-width:600px){.cg-ov{font-size:10.5px}.cg-ov th,.cg-ov td{padding:6px 5px}.cg-ov td.blk{width:64px}.cg-ov .mono{letter-spacing:-.2px}}
+</style>
 </head>
 <body>
 
@@ -46,14 +52,14 @@
   <div id="content"></div>
 </div>
 
-<script src="common.js?v=3"></script>
+<script src="common.js?v=4"></script>
 <script>
 // Reads the Portfolio Ledger (the permanent record). Loading, FIFO matching
 // and the tax rules are shared with the holdings page: common.js
 // A "portfolio" here is the taxpayer (Piyush / Piyush HUF / Suchita), across
 // that person's broking accounts — Piyush, 15-10-2026.
 const CG_DEFAULTS = () => ({ fy:null, taxpayer:'All', search:'',
-  sort:{ real:{k:'sellDate',d:1}, open:{k:'gain',d:-1} } });
+  sort:{ real:{k:'sellDate',d:1}, open:{k:'gain',d:-1}, rs:{k:'gain',d:-1}, os:{k:'gain',d:-1} } });
 Object.assign(S, { cgFilters: CG_DEFAULTS() });
 
 // ═══════════════════════════════════════
@@ -101,7 +107,7 @@ const sorter = ({k,d}) => (a,b) => {
 };
 function setSort(table, k) {
   const s = S.cgFilters.sort[table];
-  if(s.k===k) s.d = -s.d; else { s.k = k; s.d = (k==='name'||k==='portfolio') ? 1 : -1; }
+  if(s.k===k) s.d = -s.d; else { s.k = k; s.d = (k==='name'||k==='portfolio'||k==='taxpayer') ? 1 : -1; }
   updateGains();
 }
 const th = (table, k, label, title) => { const s = S.cgFilters.sort[table];
@@ -165,7 +171,9 @@ function renderGainsBody() {
   const open = openRows();
   const curFY = finYear(new Date());
 
-  // Overview table: person → broking account rows, then the person's total.
+  // Overview, in Piyush's layout (16-10-2026): one table per person; row
+  // blocks Realised / Unrealised / If everything sold today, each with the
+  // person's broking accounts and a TOTAL; columns LTCG / STCG / NETT.
   // FIFO itself runs per broking account; these are just sums of its results.
   const order = ledgerPortfolios();
   const byTp = {};
@@ -174,45 +182,98 @@ function renderGainsBody() {
   const tps = Object.keys(byTp)
     .sort((a,b)=> order.findIndex(p=>taxpayerOf(p)===a) - order.findIndex(p=>taxpayerOf(p)===b));
   const both = f.fy===curFY;   // "if sold today" only adds up within the current FY
-  const g3 = (s, l) => `<td class="mono">${gainSpan(s)}</td><td class="mono">${gainSpan(l)}</td><td class="mono"><b>${gainSpan(s+l)}</b></td>`;
-  const ovRow = (label, acct, real, opn, cls) => { const r = sumGains(real), u = sumOpen(opn);
-    return `<tr class="${cls}"><td>${label}</td><td>${acct}</td>${g3(r.stcg, r.ltcg)}${g3(u.stcg, u.ltcg)}${both ? g3(r.stcg+u.stcg, r.ltcg+u.ltcg) : ''}</tr>`; };
-  let ovBody = '';
-  for(const tp of tps) {
+  const amt = n => window.innerWidth < 600 ? fmtL(n) : fmtR(n,0);   // phone: ₹1.20L; desktop: whole rupees
+  const g0 = n => `<span class="${n>=0?'pl-pos':'pl-neg'}">${n>=0?'+':''}${amt(n)}</span>`;
+  const cells = (l, s) => `<td class="mono">${g0(l)}</td><td class="mono">${g0(s)}</td><td class="mono"><b>${g0(l+s)}</b></td>`;
+  const block = (label, accts, fn) => accts.map((a,i) => { const v = fn([a]);
+      return `<tr>${i===0?`<td class="blk" rowspan="${accts.length+1}">${label}</td>`:''}<td>${portLabel(a)}</td>${cells(v.l, v.s)}</tr>`; }).join('')
+    + (() => { const v = fn(accts); return `<tr class="subtotal"><td><b>TOTAL</b></td>${cells(v.l, v.s)}</tr>`; })();
+  const overview = tps.map(tp => {
     const accts = Object.keys(byTp[tp]).sort((a,b)=>order.indexOf(a)-order.indexOf(b));
-    for(const a of accts) ovBody += ovRow('', portLabel(a), byTp[tp][a].real, byTp[tp][a].open, '');
-    ovBody += ovRow(`<b>${esc(tp)}</b>`, '<span class="muted">Total</span>',
-      accts.flatMap(a=>byTp[tp][a].real), accts.flatMap(a=>byTp[tp][a].open), 'subtotal');
-  }
-  const grp = (label, title) => `<th colspan="3" style="text-align:center" title="${esc(title)}">${label}</th>`;
-  const overview = tps.length ? `
-  <div class="section-title">Overview — ${esc(f.fy||'')}</div>
-  <div class="table-scroll" style="margin-bottom:22px"><table><thead>
-    <tr><th rowspan="2">Portfolio</th><th rowspan="2">Broking Account</th>
-      ${grp(`Realised ${esc(f.fy||'')}`, 'Sales already made in this financial year')}
-      ${grp('Unrealised · if sold today', 'Shares still held, at today’s price')}
-      ${both ? grp(`${esc(curFY)} if everything sold today`, 'Realised + unrealised') : ''}</tr>
-    <tr>${'<th>STCG</th><th>LTCG</th><th>Net</th>'.repeat(both ? 3 : 2)}</tr>
-  </thead><tbody>${ovBody}</tbody></table></div>` : '';
+    const real = as => { const t = sumGains(as.flatMap(a=>byTp[tp][a].real)); return { l:t.ltcg, s:t.stcg }; };
+    const opn  = as => { const t = sumOpen(as.flatMap(a=>byTp[tp][a].open));  return { l:t.ltcg, s:t.stcg }; };
+    const all  = as => { const r = real(as), u = opn(as); return { l:r.l+u.l, s:r.s+u.s }; };
+    return `<div class="section-title">${esc(tp)} — ${esc(f.fy||'')}</div>
+    <div class="table-scroll" style="margin-bottom:22px"><table class="cg-ov"><thead><tr>
+      <th></th><th>Account</th><th>LTCG</th><th>STCG</th><th>NETT</th></tr></thead><tbody>
+      ${block(`Realised gain<br><span class="muted" style="font-weight:400">${esc(f.fy||'')}</span>`, accts, real)}
+      ${block('Unrealised gain<br><span class="muted" style="font-weight:400">if sold today</span>', accts, opn)}
+      ${both ? block('Total gain if everything sold today', accts, all) : ''}
+    </tbody></table></div>`;
+  }).join('');
 
   return `
   ${overview}
+  ${realisedWarnings(rows)}
+  ${renderByStock(rows, open)}
   ${renderRealised(rows)}
   ${renderOpen(open)}`;
 }
 
-function renderRealised(rows) {
+// ═══════════════════════════════════════
+// STOCK-WISE (scrip-wise) — one row per person + stock, accounts combined
+// ═══════════════════════════════════════
+// Sums of the FIFO results (FIFO stays per broking account). Realised rows
+// count only matches in the totals (known cost, not intraday); unrealised rows
+// without a current price are left out and flagged on the lot table.
+function stockRows(list, isOpen) {
+  const m = {};
+  for(const r of list) {
+    if(isOpen ? r.gain==null : !inTotals(r)) continue;
+    const k = r.taxpayer+'|'+r.isin;
+    const x = m[k] ??= { taxpayer:r.taxpayer, isin:r.isin, name:r.name, accts:new Set(), qty:0, cost:0, value:0, ltcg:0, stcg:0 };
+    x.name = r.name; x.accts.add(r.portfolio); x.qty += r.qty; x.cost += r.cost;
+    x.value += isOpen ? r.value : r.saleValue;
+    x[r.term==='LTCG'?'ltcg':'stcg'] += r.gain;
+  }
+  return Object.values(m).map(x => ({ ...x, accounts:[...x.accts].join(', '), gain:x.ltcg+x.stcg,
+    gainPct: x.cost>0 ? (x.ltcg+x.stcg)/x.cost*100 : null }));
+}
+
+function stockTable(key, list, valueLabel, qtyLabel) {
+  const rows = list.sort(sorter(S.cgFilters.sort[key]));
+  if(!rows.length) return `<div class="no-data">Nothing to show for these filters.</div>`;
+  return `<div class="table-wrap"><table><thead><tr>
+    ${th(key,'name','Stock')}${th(key,'taxpayer','Portfolio')}<th>Accounts</th>${th(key,'qty',qtyLabel)}
+    ${th(key,'cost','Cost')}${th(key,'value',valueLabel)}${th(key,'ltcg','LTCG')}${th(key,'stcg','STCG')}${th(key,'gain','Gain ₹')}${th(key,'gainPct','Gain %','Gain ÷ cost')}
+  </tr></thead><tbody>
+  ${rows.map(r=>`<tr>
+    <td class="name-cell" title="${esc(r.isin)}">${esc(r.name)}</td><td>${esc(r.taxpayer)}</td>
+    <td>${r.accounts.split(', ').map(portLabel).join(' ')}</td>
+    <td class="mono">${fmtN(r.qty,0)}</td><td class="mono">${fmtR(r.cost)}</td><td class="mono">${fmtR(r.value)}</td>
+    <td class="mono">${gainSpan(r.ltcg)}</td><td class="mono">${gainSpan(r.stcg)}</td>
+    <td class="mono"><b>${gainSpan(r.gain)}</b></td><td class="mono">${pctSpan(r.gainPct)}</td>
+  </tr>`).join('')}
+  </tbody></table>
+  <div class="lot-cards">${rows.map(r=>`<div class="lot-card">
+    <div class="lc-top"><div class="lc-name">${esc(r.name)}</div><div class="lc-pl">${gainSpan(r.gain)} ${pctSpan(r.gainPct)}</div></div>
+    <div class="lc-meta">${esc(r.taxpayer)} · ${esc(r.accounts)}</div>
+    <div class="lc-grid">
+      ${lcCell(qtyLabel,fmtN(r.qty,0))}${lcCell('Cost',fmtR(r.cost,0))}${lcCell(valueLabel,fmtR(r.value,0))}
+      ${lcCell('LTCG',gainSpan(r.ltcg))}${lcCell('STCG',gainSpan(r.stcg))}${lcCell('Gain %',pctSpan(r.gainPct))}
+    </div></div>`).join('')}</div></div>`;
+}
+
+// Phone: the tables become cards, so the sort is also offered as a dropdown
+function sortPicker(key) {
+  const s = S.cgFilters.sort[key];
+  const opts = [['gain',-1,'Gain ₹ — high to low'],['gain',1,'Gain ₹ — low to high'],
+                ['gainPct',-1,'Gain % — high to low'],['gainPct',1,'Gain % — low to high'],['name',1,'Stock A–Z']];
+  return `<select class="filter-select" style="margin:0 0 10px" onchange="const [k,d]=this.value.split('|');S.cgFilters.sort.${key}={k,d:+d};updateGains()">
+    ${opts.map(([k,d,l])=>`<option value="${k}|${d}"${s.k===k&&s.d===d?' selected':''}>Sort: ${l}</option>`).join('')}</select>`;
+}
+
+function renderByStock(rows, open) {
   const f = S.cgFilters;
-  if(!f.fy) return `<div class="no-data">No sales recorded in the Portfolio Ledger yet.</div>`;
-  if(!rows.length) return `<div class="section-title">Realised — ${esc(f.fy)}</div><div class="no-data">No sales in ${esc(f.fy)} match these filters.</div>`;
+  return `
+  <div class="section-title">Realised — stock-wise ${esc(f.fy||'')}</div>
+  ${sortPicker('rs')}${stockTable('rs', stockRows(rows, false), 'Sale Value', 'Qty Sold')}
+  <div class="section-title" style="margin-top:28px">Unrealised — stock-wise, at today&#39;s price</div>
+  ${sortPicker('os')}${stockTable('os', stockRows(open, true), 'Value', 'Qty Held')}
+  <div class="table-note">One row per stock for each person, broking accounts combined (FIFO is still worked out per account). Realised counts only sales with a known cost, not intraday. Detailed sale-by-sale and lot-by-lot tables follow below.</div>`;
+}
 
-  // Summary: person → broking account (Ledger tab order)
-  const order = ledgerPortfolios();
-  const groups = {};
-  for(const r of rows) ((groups[r.taxpayer] ??= {})[r.portfolio] ??= []).push(r);
-  const tpNames = Object.keys(groups).sort((a,b)=>
-    order.findIndex(p=>taxpayerOf(p)===a) - order.findIndex(p=>taxpayerOf(p)===b));
-
+function realisedWarnings(rows) {
   const missing  = rows.filter(r=>r.flags.includes('Buy missing'));
   const intraday = rows.filter(r=>r.flags.includes('Intraday'));
   const pre2018  = rows.filter(r=>r.flags.includes('Pre-2018'));
@@ -221,25 +282,16 @@ function renderRealised(rows) {
   if(intraday.length) warn.push(`<div class="flag-line"><span class="tag tag-flag">Intraday</span> ${intraday.length} same-day match${intraday.length>1?'es':''} · ${gainSpan(intraday.reduce((s,r)=>s+r.gain,0))} is speculative income, <b>not in the STCG/LTCG totals</b>.</div>`);
   if(pre2018.length)  warn.push(`<div class="flag-line"><span class="tag tag-flag">Pre-2018</span> ${pre2018.length} LTCG match${pre2018.length>1?'es':''} on shares bought before 1-Feb-2018. Grandfathering may apply; shown at actual cost.</div>`);
 
-  const sumRow = (label, t, cls, portfolio) => `<tr class="${cls}">
-    <td>${label}</td><td>${portfolio||''}</td><td class="mono">${t.n}</td>
-    <td class="mono">${t.missing?`<span class="red">${t.missing}</span>`:'<span class="muted">0</span>'}</td>
-    <td class="mono">${fmtR(t.sale)}</td><td class="mono">${fmtR(t.cost)}</td>
-    <td class="mono">${gainSpan(t.stcg)}</td><td class="mono">${gainSpan(t.ltcg)}</td><td class="mono">${gainSpan(t.net)}</td></tr>`;
-  let breakdown = '';
-  for(const tp of tpNames) {
-    const ps = Object.keys(groups[tp]).sort((a,b)=>order.indexOf(a)-order.indexOf(b));
-    for(const p of ps) breakdown += sumRow('', sumGains(groups[tp][p]), '', portLabel(p));
-    breakdown += sumRow(`<b>${esc(tp)}</b>`, sumGains(Object.values(groups[tp]).flat()), 'subtotal', '<span class="muted">Total</span>');
-  }
+  return warn.length ? `<div class="flag-box">${warn.join('')}</div>` : '';
+}
+
+function renderRealised(rows) {
+  const f = S.cgFilters;
+  if(!f.fy) return `<div class="no-data">No sales recorded in the Portfolio Ledger yet.</div>`;
+  if(!rows.length) return `<div class="section-title">Realised — ${esc(f.fy)}</div><div class="no-data">No sales in ${esc(f.fy)} match these filters.</div>`;
 
   return `
-  ${warn.length?`<div class="flag-box">${warn.join('')}</div>`:''}
-  <div class="section-title">Realised — summary ${esc(f.fy)}</div>
-  <div class="table-scroll" style="margin-bottom:22px"><table><thead><tr>
-    <th>Portfolio</th><th>Broking Account</th><th>In Totals</th><th title="Sales with no purchase in the Ledger — not in the totals">Buy Missing</th><th>Sale Value</th><th>Cost</th><th>STCG</th><th>LTCG</th><th>Net Gain</th>
-  </tr></thead><tbody>${breakdown}</tbody></table></div>
-  <div class="section-title">Realised — every sale, matched to its purchase (FIFO)</div>
+  <div class="section-title" style="margin-top:28px">Realised — every sale, matched to its purchase (FIFO)</div>
   <div class="table-wrap"><table><thead><tr>
     ${th('real','name','Stock')}${th('real','portfolio','Account')}${th('real','buyDate','Buy Date')}${th('real','sellDate','Sell Date')}${th('real','days','Days')}${th('real','qty','Qty')}
     <th>Buy ₹</th><th>Sell ₹</th>${th('real','cost','Cost')}${th('real','saleValue','Sale Value')}${th('real','gain','Gain ₹')}${th('real','gainPct','Gain %','Gain ÷ cost')}${th('real','term','Term')}<th>Flags</th>
@@ -275,7 +327,7 @@ function renderRealised(rows) {
 }
 
 function renderOpen(rows) {
-  const title = `<div class="section-title" style="margin-top:28px">Unrealised — shares still held, at today&#39;s price</div>`;
+  const title = `<div class="section-title" style="margin-top:28px">Unrealised — every lot still held, at today&#39;s price</div>`;
   if(!rows.length) return `${title}<div class="no-data">No open holdings match these filters.</div>`;
   const noPrice = rows.filter(r=>r.cmp==null);
   return `${title}

@@ -292,11 +292,16 @@ function valuesToWorkbook(valueRanges) {
   return wb;
 }
 
-// Memory only, never persisted — so each page asks for sign-in when opened.
-let gToken = null;   // {access_token, expiresAt}
+// Kept in sessionStorage so moving between the dashboard pages in the same
+// browser tab doesn't ask for sign-in again (Piyush, 16-10-2026). It is the
+// read-only Sheets token, gone when the tab closes, and expires within an hour.
+const TOKEN_KEY = 'pcc.gtoken';
+let gToken = (() => { try { return JSON.parse(sessionStorage.getItem(TOKEN_KEY)) || null; } catch { return null; } })();
+const saveToken = t => { gToken = t; try { t ? sessionStorage.setItem(TOKEN_KEY, JSON.stringify(t)) : sessionStorage.removeItem(TOKEN_KEY); } catch {} };
+const hasValidToken = () => !!(gToken && Date.now() < gToken.expiresAt - 60000);
 
 function getToken() {
-  if(gToken && Date.now() < gToken.expiresAt - 60000) return Promise.resolve(gToken.access_token);
+  if(hasValidToken()) return Promise.resolve(gToken.access_token);
   return new Promise((resolve, reject) => {
     if(!window.google?.accounts?.oauth2) return reject(new Error('Google Sign-In failed to load — check your connection and retry.'));
     const client = google.accounts.oauth2.initTokenClient({
@@ -304,7 +309,7 @@ function getToken() {
       scope: SHEETS_SCOPE,
       callback: resp => {
         if(resp.error) return reject(new Error('Sign-in cancelled or refused ('+resp.error+').'));
-        gToken = { access_token: resp.access_token, expiresAt: Date.now() + resp.expires_in*1000 };
+        saveToken({ access_token: resp.access_token, expiresAt: Date.now() + resp.expires_in*1000 });
         resolve(gToken.access_token);
       },
       error_callback: err => reject(new Error('Sign-in window closed ('+(err.type||'unknown')+').')),
@@ -319,7 +324,7 @@ async function fetchWorkbook(sheetId, token, label, onlyTabs) {
   const auth = { headers: { Authorization: 'Bearer '+token } };
   const api  = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}`;
   const check = res => {
-    if(res.status===401) { gToken = null; throw new Error('Session expired — sign in again.'); }
+    if(res.status===401) { saveToken(null); throw new Error('Session expired — sign in again.'); }
     if(res.status===403 || res.status===404) throw new Error(`This Google account cannot read the ${label}. Sign in with the account it is shared with.`);
     if(!res.ok) throw new Error(`Google Sheets error ${res.status} (${label})`);
     return res.json();
@@ -391,4 +396,5 @@ function initLedgerPage(render, withPrices) {
   });
   document.getElementById('btn-google').addEventListener('click', () => run().catch(e => setStatus('Error: '+e.message)));
   document.getElementById('btn-reload').addEventListener('click', () => run().catch(e => alert(e.message)));
+  if(hasValidToken()) run().catch(e => setStatus('Error: '+e.message));   // signed in on another page
 }

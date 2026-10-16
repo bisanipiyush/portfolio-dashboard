@@ -60,7 +60,7 @@
   <div id="content"></div>
 </div>
 
-<script src="common.js?v=3"></script>
+<script src="common.js?v=4"></script>
 <script>
 // ═══════════════════════════════════════
 // STATE
@@ -301,6 +301,8 @@ async function loadSheet() {
 document.getElementById('btn-google').addEventListener('click', () => {
   loadSheet().catch(e => setStatus('Error: '+e.message));
 });
+// Already signed in on another dashboard page in this tab: load straight away
+if(hasValidToken()) loadSheet().catch(e => setStatus('Error: '+e.message));
 
 async function loadFile(file) {
   S.source = 'file';
