@@ -359,8 +359,72 @@ function parseCurrentPrices(wb) {
     }
   };
   if(wb.Sheets['SCREENER_ALL STKS']) take('SCREENER_ALL STKS', 'ISIN Code', 'Current Price', false);
-  for(const t of wb.SheetNames) if(t!=='SCREENER_ALL STKS') take(t, 'ISIN No.', 'Current Price', true);
+  for(const t of wb.SheetNames) if(t!=='SCREENER_ALL STKS' && t!==PRICES_TAB) take(t, 'ISIN No.', 'Current Price', true);
+  // Live prices (Angel One, every 5 min in market hours) beat the weekly screener
+  for(const [isin, p] of Object.entries(parseLivePrices(wb).byIsin)) prices[isin] = p.ltp;
   return prices;
+}
+
+// ═══════════════════════════════════════
+// LIVE PRICES ("Prices" tab, written by the sheet's Apps Script)
+// ═══════════════════════════════════════
+// byIsin: ISIN → {ltp, prevClose, chg, chgPct}; asOf: "dd-mm-yyyy HH:mm" (IST)
+// of the last successful refresh, or '' when the tab is missing or empty.
+const PRICES_TAB = 'Prices';
+const PRICE_REFRESH_MS = 10*60*1000;
+function parseLivePrices(wb) {
+  const out = { byIsin:{}, asOf:'' };
+  const ws = wb.Sheets[PRICES_TAB];
+  if(!ws) return out;
+  const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:null, raw:true});
+  const H = (rows[0]||[]).map(h => String(h??'').trim());
+  const c = n => H.indexOf(n);
+  const [ci, cl, cp, cc, cpc, cu] = ['ISIN','LTP','Prev Close','Change','Change %','Updated'].map(c);
+  if(ci<0 || cl<0) return out;
+  for(let i=1; i<rows.length; i++) {
+    const r = rows[i]||[], isin = String(r[ci]??'').trim(), ltp = r[cl];
+    if(!isin || typeof ltp!=='number' || ltp<=0) continue;
+    const num = v => typeof v==='number' ? v : null;
+    out.byIsin[isin] = { ltp, prevClose:num(r[cp]), chg:num(r[cc]), chgPct:num(r[cpc]) };
+    if(cu>=0 && r[cu] && String(r[cu])>out.asOf) out.asOf = String(r[cu]);
+  }
+  return out;
+}
+
+// "Prices 11:35" for the header; flagged when older than 30 minutes on a
+// weekday during market hours (the Apps Script refreshes every 5 minutes).
+function priceAgeHtml(asOf) {
+  if(!asOf) return '<span title="No live prices yet: weekly screener prices are used">screener prices</span>';
+  const m = asOf.match(/^(\d{2})-(\d{2})-(\d{4}) (\d{2}):(\d{2})$/);
+  if(!m) return esc(asOf);
+  const t = new Date(+m[3], +m[2]-1, +m[1], +m[4], +m[5]);
+  const now = new Date(), mins = (now - t)/60000;
+  const hhmm = now.getHours()*100 + now.getMinutes(), weekday = now.getDay()>=1 && now.getDay()<=5;
+  const stale = weekday && hhmm>=930 && hhmm<=1545 && mins>30;
+  const label = dayKey(t)===dayKey(now) ? `${m[4]}:${m[5]}` : `${m[1]}-${m[2]} ${m[4]}:${m[5]}`;
+  return `<span title="Live prices from Angel One, updated ${esc(asOf)}"${stale?' style="color:var(--orange)"':''}>prices ${label}${stale?' ⚠':''}</span>`;
+}
+
+// Re-reads only the Prices tab every 10 minutes while the page is open (and
+// when a hidden tab comes back into view after that long). onUpdate(live)
+// gets the parsed tab. Never opens a sign-in pop-up: once the hour-long
+// token expires it stops quietly until the page is reloaded.
+function startPriceRefresh(onUpdate) {
+  if(startPriceRefresh.started) return;
+  startPriceRefresh.started = true;
+  let last = Date.now();
+  const tick = async () => {
+    if(!hasValidToken()) return;
+    last = Date.now();
+    try {
+      const wb = await fetchWorkbook(SHEET_ID, gToken.access_token, 'portfolio sheet', [PRICES_TAB]);
+      onUpdate(parseLivePrices(wb));
+    } catch(e) { console.warn('Price refresh failed:', e.message); }
+  };
+  setInterval(() => { if(document.visibilityState==='visible') tick(); }, PRICE_REFRESH_MS);
+  document.addEventListener('visibilitychange', () => {
+    if(document.visibilityState==='visible' && Date.now()-last >= PRICE_REFRESH_MS) tick();
+  });
 }
 
 // For the Ledger pages: the Ledger itself, plus only what they need from the
@@ -382,6 +446,7 @@ async function loadLedgerData(withPrices) {
   S.realised     = fifo.realised;   // unmatched sells come back as "Buy missing" rows
   S.openLots     = fifo.openLots;
   S.currentPrices = withPrices ? parseCurrentPrices(live) : {};
+  S.pricesAsOf    = withPrices ? parseLivePrices(live).asOf : '';
 }
 
 // Sign-in screen → page, for the Ledger pages. render() draws #content.
@@ -389,8 +454,16 @@ function initLedgerPage(render, withPrices) {
   const run = () => loadLedgerData(withPrices).then(() => {
     document.getElementById('loading').classList.add('hidden');
     document.getElementById('app').classList.remove('hidden');
-    document.getElementById('data-badge').innerHTML = `<span>${S.ledgerTxs.length}</span> ledger rows`;
+    const badge = () => document.getElementById('data-badge').innerHTML =
+      `<span>${S.ledgerTxs.length}</span> ledger rows` + (withPrices ? ` · ${priceAgeHtml(S.pricesAsOf)}` : '');
+    badge();
     render();
+    // Unrealised gains follow the live prices while the page stays open
+    if(withPrices) startPriceRefresh(live => {
+      for(const [isin, p] of Object.entries(live.byIsin)) S.currentPrices[isin] = p.ltp;
+      if(live.asOf) S.pricesAsOf = live.asOf;
+      badge(); render();
+    });
     // On a phone the tab row scrolls sideways — bring this page's tab into view
     document.querySelector('.nav-tab.active')?.scrollIntoView({ inline:'center', block:'nearest' });
   });

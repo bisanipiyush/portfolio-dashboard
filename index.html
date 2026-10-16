@@ -60,7 +60,7 @@
   <div id="content"></div>
 </div>
 
-<script src="common.js?v=4"></script>
+<script src="common.js?v=5"></script>
 <script>
 // ═══════════════════════════════════════
 // STATE
@@ -69,6 +69,8 @@
 Object.assign(S, {
   openLots:  [],
   prices:    {},   // ISIN → {price, pe, roce, roe, dma50, dma200, nse, bse}
+  livePrices:{ byIsin:{}, asOf:'' },   // "Prices" tab (Angel One), see common.js
+  rawLots:   [],   // FIFO open lots before enrich(), so a price refresh can re-enrich
   stockMeta: {},   // ISIN → {name, bucket, smeCat}
   // Caps come only from the Settings tab — the page is public, so no
   // personal figures live in its code. A bucket without one shows "No cap set".
@@ -239,7 +241,9 @@ function enrich(lots) {
   return lots.map(l => {
     const sc  = S.prices[l.isin] || {};
     const sm  = S.stockMeta[l.isin] || {};
-    const cur = l.cmp || sc.cmp || null;   // CMP from portfolio sheet col M, else screener
+    const live = S.livePrices.byIsin[l.isin];
+    // Live Angel One price first, else the sheet's weekly screener price
+    const cur = live?.ltp || l.cmp || sc.cmp || null;
     const dma50  = l.dma50  ?? sc.dma50  ?? null;
     const dma200 = l.dma200 ?? sc.dma200 ?? null;
     const inv = l.qty * l.tradeRate;
@@ -254,6 +258,8 @@ function enrich(lots) {
       // blank, so only trust it when that lookup actually found a price.
       status:       (l.cmp && l.status) || deriveStatus(cur, dma50, dma200),
       currentPrice: cur,
+      dayChg:  live?.chg!=null ? l.qty*live.chg : null,   // today's move on this lot, ₹
+      dayPct:  live?.chgPct ?? null,
       dma50, dma200,
       invested: inv, currValue: cv,
       pl, plPct: plP,
@@ -279,8 +285,10 @@ function compute(wb) {
   parseStockDetails(wb);
   parseScreener(wb);
   const txs = parseTransactions(wb);
+  S.livePrices = parseLivePrices(wb);
   const { openLots, errors } = runFIFO(txs);
   S.errors.push(...errors);
+  S.rawLots  = openLots;
   S.openLots = enrich(openLots);
 }
 
@@ -296,6 +304,12 @@ async function loadSheet() {
   compute(wb);
   S.source = 'sheet';
   showApp();
+  startPriceRefresh(live => {
+    S.livePrices = live;
+    S.openLots = enrich(S.rawLots);
+    updateBadge();
+    if(S.activeTab==='positions') updateTable(); else renderContent();
+  });
 }
 
 document.getElementById('btn-google').addEventListener('click', () => {
@@ -338,14 +352,19 @@ document.getElementById('btn-reload').addEventListener('click', () => {
 // ═══════════════════════════════════════
 // SHOW APP
 // ═══════════════════════════════════════
-function showApp() {
-  document.getElementById('loading').classList.add('hidden');
-  document.getElementById('app').classList.remove('hidden');
+function updateBadge() {
   const lots    = S.openLots.length;
   const stocks  = new Set(S.openLots.map(l=>l.isin)).size;
   const priced  = S.openLots.filter(l=>l.currentPrice).length;
   document.getElementById('data-badge').innerHTML =
-    `<span>${lots}</span> lots · <span>${stocks}</span> stocks · <span>${priced}</span> priced`;
+    `<span>${lots}</span> lots · <span>${stocks}</span> stocks · <span>${priced}</span> priced`
+    + (S.source==='sheet' ? ` · ${priceAgeHtml(S.livePrices.asOf)}` : '');
+}
+
+function showApp() {
+  document.getElementById('loading').classList.add('hidden');
+  document.getElementById('app').classList.remove('hidden');
+  updateBadge();
   renderErrors();
   // Links from the other pages open a tab directly, e.g. index.html#positions
   const h = location.hash.slice(1);
@@ -378,6 +397,12 @@ function renderDashboard() {
   const totPct  = totInv>0 ? (totPL/totInv)*100 : 0;
   const unpriced= lots.filter(l=>!l.currentPrice).length;
   const plClass = totPL>=0?'green':'red';
+  // Today's move: lots with a live price; % of their value at yesterday's close
+  const dl      = lots.filter(l=>l.dayChg!=null);
+  const dayChg  = dl.reduce((s,l)=>s+l.dayChg, 0);
+  const dayBase = dl.reduce((s,l)=>s+(l.currValue-l.dayChg), 0);
+  const dayPct  = dayBase>0 ? dayChg/dayBase*100 : 0;
+  const dayCls  = dayChg>=0?'green':'red';
 
   // Per-bucket stats
   const bStats = {};
@@ -433,6 +458,12 @@ function renderDashboard() {
       <div class="label">Unrealised P&amp;L</div>
       <div class="value ${plClass}">${totPL>=0?'+':''}${fmtL(totPL)}</div>
       <div class="sub ${plClass}">${totPct>=0?'+':''}${fmtN(totPct,2)}%</div>
+    </div>
+    <div class="stat-card accent-border">
+      <div class="label">Today</div>
+      ${dl.length ? `<div class="value ${dayCls}">${dayChg>=0?'+':''}${fmtL(dayChg)}</div>
+      <div class="sub ${dayCls}">${dayPct>=0?'+':''}${fmtN(dayPct,2)}% · ${dl.length} of ${lots.length} lots</div>`
+      : `<div class="value muted">—</div><div class="sub">No live prices yet</div>`}
     </div>
     <div class="stat-card">
       <div class="label">Portfolios Active</div>
@@ -535,7 +566,7 @@ function summaryRows(lots) {
       isin:l.isin, name:l.name,
       bucket:l.bucket, taxSet:new Set(), statusSet:new Set(),
       qty:0, invested:0, currValue:0, currentPrice:null,
-      buyDates:[], pe:l.pe, roce:l.roce,
+      buyDates:[], pe:l.pe, roce:l.roce, dayPct:null,
     };
     const s=map[k];
     s.qty      += l.qty;
@@ -544,6 +575,7 @@ function summaryRows(lots) {
     s.taxSet.add(l.taxType);
     s.buyDates.push(l.buyDate);
     if(l.currentPrice) s.currentPrice=l.currentPrice;
+    if(l.dayPct!=null) s.dayPct=l.dayPct;   // same stock, same day move
     if(l.status) s.statusSet.add(l.status);
     if(l.bucket) s.bucket=l.bucket;
   }
@@ -561,6 +593,10 @@ function summaryRows(lots) {
 
 const sortTh = (col,lbl) =>
   `<th data-sort="${col}" class="${S.sortCol===col?(S.sortDir>0?'sorted-asc':'sorted-desc'):''}">${lbl}</th>`;
+
+// Today's move under a price, e.g. "+1.2%" (live prices only)
+const dayTag = pct => pct==null ? '' :
+  `<br><small class="${pct>=0?'pl-pos':'pl-neg'}" style="font-size:9.5px">${pct>=0?'+':''}${fmtN(pct,2)}%</small>`;
 
 const plCell = (pl,pct) => pl==null ? '—' :
   `<span class="${pl>=0?'pl-pos':'pl-neg'}">${pl>=0?'+':''}${fmtL(pl)}<br>
@@ -583,7 +619,7 @@ function lotCard(l) {
     </div>
     <div class="lc-tags">${statusTag(l.status)}<span class="tag tag-${l.taxType==='STCG'?'stcg':'ltcg'}">${l.taxType}</span>${bucketTag(l.bucket)}</div>
     <div class="lc-grid">
-      ${lcCell('Qty',fmtN(l.qty,0))}${lcCell('Buy ₹',fmtN(l.tradeRate,2))}${lcCell('CMP',l.currentPrice?fmtN(l.currentPrice,2):'—')}
+      ${lcCell('Qty',fmtN(l.qty,0))}${lcCell('Buy ₹',fmtN(l.tradeRate,2))}${lcCell('CMP',l.currentPrice?fmtN(l.currentPrice,2)+dayTag(l.dayPct):'—')}
       ${lcCell('Invested',fmtL(l.invested))}${lcCell('Current',l.currValue?fmtL(l.currValue):'—')}${lcCell('PE',l.pe?fmtN(l.pe,1):'—')}
     </div>
   </div>`;
@@ -597,7 +633,7 @@ function summaryCard(r) {
     </div>
     <div class="lc-tags">${statusTag(r.status)}<span class="tag tag-${r.taxType.includes('STCG')?'stcg':'ltcg'}">${r.taxType}</span>${bucketTag(r.bucket)}</div>
     <div class="lc-grid">
-      ${lcCell('Qty',fmtN(r.qty,0))}${lcCell('Avg Cost',fmtN(r.avgRate,2))}${lcCell('CMP',r.currentPrice?fmtN(r.currentPrice,2):'—')}
+      ${lcCell('Qty',fmtN(r.qty,0))}${lcCell('Avg Cost',fmtN(r.avgRate,2))}${lcCell('CMP',r.currentPrice?fmtN(r.currentPrice,2)+dayTag(r.dayPct):'—')}
       ${lcCell('Invested',fmtL(r.invested))}${lcCell('Current',fmtL(r.currValue))}${lcCell('PE',r.pe?fmtN(r.pe,1):'—')}
     </div>
   </div>`;
@@ -638,7 +674,7 @@ function renderLotTable(lots) {
     <td class="mono">${l.daysHeld}</td>
     <td class="mono">${fmtN(l.qty,0)}</td>
     <td class="mono">${fmtN(l.tradeRate,2)}</td>
-    <td class="mono">${l.currentPrice?fmtN(l.currentPrice,2):'<span class="muted">—</span>'}</td>
+    <td class="mono">${l.currentPrice?fmtN(l.currentPrice,2)+dayTag(l.dayPct):'<span class="muted">—</span>'}</td>
     <td class="mono">${fmtL(l.invested)}</td>
     <td class="mono">${l.currValue?fmtL(l.currValue):'<span class="muted">—</span>'}</td>
     <td class="mono">${plCell(l.pl,l.plPct)}</td>
@@ -682,7 +718,7 @@ function renderSummaryTable(lots) {
     <td class="name-cell" title="${esc(r.isin)}">${esc(r.name)}</td>
     <td class="mono">${fmtN(r.qty,0)}</td>
     <td class="mono">${fmtN(r.avgRate,2)}</td>
-    <td class="mono">${r.currentPrice?fmtN(r.currentPrice,2):'<span class="muted">—</span>'}</td>
+    <td class="mono">${r.currentPrice?fmtN(r.currentPrice,2)+dayTag(r.dayPct):'<span class="muted">—</span>'}</td>
     <td class="mono">${fmtL(r.invested)}</td>
     <td class="mono">${fmtL(r.currValue)}</td>
     <td class="mono">${plCell(r.pl,r.plPct)}</td>
