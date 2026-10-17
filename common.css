@@ -3,7 +3,7 @@
   --bg:#0b0f14;--surface:#131920;--surface2:#1a2130;--border:#2a3444;
   --text:#dce8f5;--muted:#667a95;--accent:#c8992a;--accent-glow:rgba(200,153,42,0.18);
   --green:#3dba6f;--red:#e05050;--blue:#4a9eff;--orange:#d97706;--purple:#a78bfa;
-  --teal:#2dd4bf;
+  --teal:#2dd4bf;--pink:#f472b6;
   --font:'Sora',sans-serif;--mono:'IBM Plex Mono',monospace;
 }
 *{box-sizing:border-box;margin:0;padding:0}
@@ -98,6 +98,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:12
 .bname-fundamental{color:var(--accent)}
 .bname-est{color:var(--teal)}
 .bname-sme{color:var(--purple)}
+.bname-cwip{color:var(--pink)}
 .bname-others{color:var(--blue)}
 .bname-unassigned{color:var(--muted)}
 .brow{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
@@ -107,6 +108,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:12
 .prog-fill.over{background:var(--red)}
 .prog-fill-est{background:var(--teal)}
 .prog-fill-sme{background:var(--purple)}
+.prog-fill-cwip{background:var(--pink)}
 .prog-fill-others{background:var(--blue)}
 .prog-labels{display:flex;justify-content:space-between;font-size:9.5px;color:var(--muted);font-family:var(--mono)}
 
@@ -159,6 +161,7 @@ td.name-cell{font-weight:500;max-width:150px;overflow:hidden;text-overflow:ellip
 .tag-fundamental{background:rgba(200,153,42,.12);color:var(--accent)}
 .tag-est{background:rgba(45,212,191,.1);color:var(--teal)}
 .tag-sme-b{background:rgba(167,139,250,.1);color:var(--purple)}
+.tag-cwip{background:rgba(244,114,182,.1);color:var(--pink)}
 .tag-others{background:rgba(74,158,255,.08);color:var(--blue)}
 .tag-unassigned{background:rgba(103,122,149,.1);color:var(--muted)}
 .tag-hold{background:rgba(61,186,111,.1);color:var(--green)}
@@ -190,6 +193,7 @@ td.name-cell{font-weight:500;max-width:150px;overflow:hidden;text-overflow:ellip
 .bucket-btn.active-fund{border-color:var(--accent);background:rgba(200,153,42,.08);color:var(--accent)}
 .bucket-btn.active-est{border-color:var(--teal);background:rgba(45,212,191,.07);color:var(--teal)}
 .bucket-btn.active-sme{border-color:var(--purple);background:rgba(167,139,250,.08);color:var(--purple)}
+.bucket-btn.active-cwip{border-color:var(--pink);background:rgba(244,114,182,.08);color:var(--pink)}
 .bucket-btn.active-others{border-color:var(--blue);background:rgba(74,158,255,.07);color:var(--blue)}
 .bucket-btn .bbt{font-weight:600;margin-bottom:2px}
 .bucket-btn .bbc{font-family:var(--mono);font-size:10px;color:var(--muted)}

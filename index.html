@@ -101,7 +101,7 @@ Object.assign(S, {
   stockMeta: {},   // ISIN → {name, bucket, smeCat}
   // Caps come only from the Settings tab — the page is public, so no
   // personal figures live in its code. A bucket without one shows "No cap set".
-  settings:  { Fundamental: {}, EST: {}, 'SME Reversal / IPO': {}, Others: {} },
+  settings:  { Fundamental: {}, EST: {}, 'SME Reversal / IPO': {}, 'CWIP Reversal': {}, Others: {} },
   activeTab:   'dashboard',
   posView:     'lot',
   gainMode:    'today',   // Positions header + cards: 'today' | 'unreal' (tap to switch)
@@ -114,7 +114,8 @@ Object.assign(S, {
 });
 
 // "SME" renamed to "SME Reversal / IPO" in Stock Details + Settings (Piyush, 16-10-2026).
-const BUCKETS = ['Fundamental','EST','SME Reversal / IPO','Others'];
+// "CWIP Reversal" added as a new bucket (Piyush, 17-10-2026).
+const BUCKETS = ['Fundamental','EST','SME Reversal / IPO','CWIP Reversal','Others'];
 
 // Screener URL — search by stock name
 const scrUrl = isin => {
@@ -125,8 +126,8 @@ const scrUrl = isin => {
 };
 
 // Bucket colour class
-const bucketClass = b => ({Fundamental:'fundamental',EST:'est','SME Reversal / IPO':'sme-b',Others:'others'}[b]||'unassigned');
-const bucketNameClass = b => b==='SME Reversal / IPO' ? 'bname-sme' : 'bname-'+(b||'unassigned').toLowerCase().replace(/\s/g,'-');
+const bucketClass = b => ({Fundamental:'fundamental',EST:'est','SME Reversal / IPO':'sme-b','CWIP Reversal':'cwip',Others:'others'}[b]||'unassigned');
+const bucketNameClass = b => b==='SME Reversal / IPO' ? 'bname-sme' : b==='CWIP Reversal' ? 'bname-cwip' : 'bname-'+(b||'unassigned').toLowerCase().replace(/\s/g,'-');
 
 // Bucket tag HTML
 const bucketTag = b => {
@@ -484,6 +485,7 @@ function renderDashboard() {
     Fundamental:'',
     EST:'prog-fill-est',
     'SME Reversal / IPO':'prog-fill-sme',
+    'CWIP Reversal':'prog-fill-cwip',
     Others:'prog-fill-others',
   };
 
@@ -943,7 +945,7 @@ function renderPositions() {
 // ROTATION ENGINE
 // ═══════════════════════════════════════
 const bucketActiveClass = b => ({
-  Fundamental:'active-fund',EST:'active-est','SME Reversal / IPO':'active-sme',Others:'active-others'
+  Fundamental:'active-fund',EST:'active-est','SME Reversal / IPO':'active-sme','CWIP Reversal':'active-cwip',Others:'active-others'
 }[b]||'');
 
 function renderRotation() {
