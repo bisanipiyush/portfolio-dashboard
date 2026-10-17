@@ -473,6 +473,25 @@ function startPriceRefresh(onUpdate, pingUrl) {
   });
 }
 
+// Losses brought forward from filed returns ("Losses BF" tab of the Live sheet,
+// typed in from each year's ITR memo): taxpayer → FY → {stcl, ltcl}, ₹ as
+// positive numbers. Business (F&O) losses are not kept there.
+function parseLossesBF(wb) {
+  const out = {}, ws = wb.Sheets['Losses BF'];
+  if(!ws) return out;
+  const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:null, raw:true});
+  const H = (rows[0]||[]).map(h => String(h??'').trim());
+  const [ct, cf, cl, ca] = ['Taxpayer','For FY','Loss Type','Amount'].map(n => H.indexOf(n));
+  if([ct,cf,cl,ca].some(i => i<0)) return out;
+  for(const r of rows.slice(1)) {
+    const tp = String(r[ct]??'').trim(), fy = String(r[cf]??'').trim(), kind = String(r[cl]??'').trim().toUpperCase(), amt = r[ca];
+    if(!tp || !fy || typeof amt!=='number' || !['STCL','LTCL'].includes(kind)) continue;
+    const x = ((out[tp] ??= {})[fy] ??= { stcl:0, ltcl:0 });
+    x[kind.toLowerCase()] += Math.abs(amt);
+  }
+  return out;
+}
+
 // For the Ledger pages: the Ledger itself, plus only what they need from the
 // Live sheet (ISIN aliases, and tab order for portfolio colours). withPrices
 // also reads current prices, for unrealised gains on the lots still held.
@@ -495,6 +514,7 @@ async function loadLedgerData(withPrices) {
   const lp        = withPrices ? parseLivePrices(live) : { asOf:'', pingUrl:'' };
   S.pricesAsOf    = lp.asOf;
   S.pricePingUrl  = lp.pingUrl;
+  S.lossesBF      = withPrices ? parseLossesBF(live) : {};
 }
 
 // Sign-in screen → page, for the Ledger pages. render() draws #content.

@@ -57,7 +57,7 @@
   <div id="content"></div>
 </div>
 
-<script src="common.js?v=9"></script>
+<script src="common.js?v=10"></script>
 <script>
 // Reads the Portfolio Ledger (the permanent record). Loading, FIFO matching
 // and the tax rules are shared with the holdings page: common.js
@@ -380,16 +380,21 @@ function renderOpen(rows) {
 //   short-term losses net off short-term gains first (they are summed together);
 //   a net short-term LOSS left over is set off against long-term gains (s.70(3));
 //   the ₹1,25,000 exemption (s.112A, listed equity) applies to the LTCG left.
-// So "net for exemption" N = LTCG + (net STCG if it is a loss). Room to book
-// more LTCG tax-free = ₹1,25,000 − N: a negative N (unused losses) adds to it,
-// assuming no further short-term gains this year (they would use the loss first).
-// Losses brought forward from earlier years are not in the Ledger, so they are
-// not included. Search box is ignored here: it is the person's whole year.
+// Then losses brought forward from filed returns ("Losses BF" tab, s.74): a
+// b/f short-term loss is used against this year's net STCG first and the rest
+// against LTCG; a b/f long-term loss only against LTCG.
+// So "net for exemption" N = LTCG + (net STCG if a loss) − b/f STCL left after
+// this year's STCG − b/f LTCL. Room to book more LTCG tax-free = ₹1,25,000 − N:
+// a negative N (unused losses) adds to it, assuming no further short-term
+// gains this year (they would use the short-term losses first).
+// Search box is ignored here: it is the person's whole year.
 const LTCG_EXEMPTION = 125000;
-function taxRoom(realRows, openRows_) {
+function taxRoom(realRows, openRows_, bf) {
   const t = sumGains(realRows), u = sumOpen(openRows_);
-  const net = t.ltcg + Math.min(0, t.stcg);
-  return { ltcg:t.ltcg, stcg:t.stcg, net,
+  const b = bf || { stcl:0, ltcl:0 };
+  const bfStclLeft = Math.max(0, b.stcl - Math.max(0, t.stcg));   // after this year's STCG
+  const net = t.ltcg + Math.min(0, t.stcg) - bfStclLeft - b.ltcl;
+  return { ltcg:t.ltcg, stcg:t.stcg, net, bf:b.stcl + b.ltcl,
            room:  Math.max(0, LTCG_EXEMPTION - net),
            above: Math.max(0, net - LTCG_EXEMPTION),
            openLtcg: u.ltcg };
@@ -407,11 +412,11 @@ function renderTaxRoom(fy) {
   const amt = n => window.innerWidth < 600 ? fmtL(n) : fmtR(n,0);
   const g0  = n => `<span class="${n>=0?'pl-pos':'pl-neg'}">${n>=0?'+':''}${amt(n)}</span>`;
   const rowsHtml = tps.map(tp => {
-    const x = taxRoom(real.filter(r=>r.taxpayer===tp), open.filter(r=>r.taxpayer===tp));
+    const x = taxRoom(real.filter(r=>r.taxpayer===tp), open.filter(r=>r.taxpayer===tp), (S.lossesBF[tp]||{})[fy]);
     const roomCell = x.above>0
       ? `<span style="color:var(--orange)" title="Long-term gain above the exemption">none: ${amt(x.above)} over</span>`
       : `<b class="pl-pos">${amt(x.room)}</b>`;
-    return `<tr><td class="blk">${esc(tp.replace(/ HUF$/, ' (HUF)'))}</td>
+    return `<tr><td class="blk">${esc(tp.replace(/ HUF$/, ' (HUF)'))}${x.bf ? `<div class="muted" style="font-weight:400;font-size:.9em" title="Loss brought forward from the filed return (Losses BF tab)">b/f loss ${amt(x.bf)}</div>` : ''}</td>
       <td class="mono">${g0(x.ltcg)}</td>
       <td class="mono">${g0(x.stcg)}</td>
       <td class="mono">${g0(x.net)}</td>
@@ -422,12 +427,12 @@ function renderTaxRoom(fy) {
   <div class="table-scroll" style="margin-bottom:8px"><table class="cg-ov cg-room"><thead><tr>
     <th></th><th title="Long-term gains realised this year, net of long-term losses">Realised LTCG</th>
     <th title="Short-term gains realised this year, net of short-term losses">Realised STCG</th>
-    <th title="LTCG after setting off a net short-term loss">Net for exemption</th>
+    <th title="LTCG after setting off this year's net short-term loss and the brought-forward losses">Net for exemption</th>
     <th title="₹1,25,000 minus 'Net for exemption': how much more LTCG can be booked tax-free this year">Room to book LTCG tax-free</th>
     <th title="Long-term gain on lots already held over 12 months, if sold today">Unrealised LTCG today</th>
   </tr></thead><tbody>${rowsHtml}</tbody></table></div>
-  <div class="table-note" style="margin-bottom:22px">Method: short-term losses net off short-term gains first; a net short-term loss left over is set off against long-term gains; the ₹1,25,000 exemption (listed equity, s.112A) applies to the long-term gain left. "Net for exemption" = realised LTCG + realised STCG when that is a loss. Room = ₹1,25,000 − net for exemption, so this year's unused losses add to it (assuming no more short-term gains this year, which would use the short-term loss first). Each person, including the HUF, has their own exemption.
-    Not included: losses brought forward from earlier years, and gains outside this dashboard (F&amp;O, unlisted shares, ETFs). Gains, not tax.</div>`;
+  <div class="table-note" style="margin-bottom:22px">Method: short-term losses net off short-term gains first; a net short-term loss left over is set off against long-term gains; the ₹1,25,000 exemption (listed equity, s.112A) applies to the long-term gain left. Losses brought forward from filed returns ("b/f loss", from the Losses BF tab of the Live sheet) come next: a b/f short-term loss is used against this year's short-term gains first, the rest against long-term gains; a b/f long-term loss only against long-term gains. "Net for exemption" = realised LTCG + realised STCG when that is a loss − b/f losses left for LTCG. Room = ₹1,25,000 − net for exemption, so unused losses add to it (assuming no more short-term gains this year, which would use the short-term losses first). Each person, including the HUF, has their own exemption.
+    Not included: gains outside this dashboard (F&amp;O, unlisted shares, ETFs). Gains, not tax.</div>`;
 }
 
 // ═══════════════════════════════════════
