@@ -12,6 +12,8 @@
 /* Capital-gains overview: compact enough for a phone without sideways scrolling */
 .cg-ov th,.cg-ov td{padding:7px 8px;white-space:nowrap}
 .cg-ov td.blk{white-space:normal;width:120px;font-weight:600;vertical-align:middle}
+.cg-ov tr.cg-grand td{border-top:2px solid var(--accent)}
+.cg-ov tbody tr:has(td.blk) td{border-top:1px solid var(--border)}
 @media(max-width:600px){.cg-ov{font-size:10.5px}.cg-ov th,.cg-ov td{padding:6px 5px}.cg-ov td.blk{width:64px}.cg-ov .mono{letter-spacing:-.2px}}
 </style>
 </head>
@@ -171,36 +173,37 @@ function renderGainsBody() {
   const open = openRows();
   const curFY = finYear(new Date());
 
-  // Overview, in Piyush's layout (16-10-2026): one table per person; row
-  // blocks Realised / Unrealised / If everything sold today, each with the
-  // person's broking accounts and a TOTAL; columns LTCG / STCG / NETT.
-  // FIFO itself runs per broking account; these are just sums of its results.
+  // Overview, in Piyush's layout (17-10-2026): ONE table. Row blocks per
+  // person (Piyush, Piyush (HUF), Suchita) and a grand Total, each with
+  // Realised (chosen FY) / Unrealised (if sold today) / Total; columns LTCG /
+  // STCG / TOTAL. FIFO runs per broking account; these are sums of its results.
+  // "Total" adds today's unrealised to the realised figure, so it is only
+  // meaningful for the current financial year; for a past year it shows "—".
   const order = ledgerPortfolios();
-  const byTp = {};
-  for(const r of rows) (((byTp[r.taxpayer] ??= {})[r.portfolio] ??= {real:[], open:[]}).real).push(r);
-  for(const r of open) (((byTp[r.taxpayer] ??= {})[r.portfolio] ??= {real:[], open:[]}).open).push(r);
-  const tps = Object.keys(byTp)
+  const tps = [...new Set([...rows.map(r=>r.taxpayer), ...open.map(r=>r.taxpayer)])]
     .sort((a,b)=> order.findIndex(p=>taxpayerOf(p)===a) - order.findIndex(p=>taxpayerOf(p)===b));
-  const both = f.fy===curFY;   // "if sold today" only adds up within the current FY
+  const both = f.fy===curFY;
   const amt = n => window.innerWidth < 600 ? fmtL(n) : fmtR(n,0);   // phone: ₹1.20L; desktop: whole rupees
-  const g0 = n => `<span class="${n>=0?'pl-pos':'pl-neg'}">${n>=0?'+':''}${amt(n)}</span>`;
-  const cells = (l, s) => `<td class="mono">${g0(l)}</td><td class="mono">${g0(s)}</td><td class="mono"><b>${g0(l+s)}</b></td>`;
-  const block = (label, accts, fn) => accts.map((a,i) => { const v = fn([a]);
-      return `<tr>${i===0?`<td class="blk" rowspan="${accts.length+1}">${label}</td>`:''}<td>${portLabel(a)}</td>${cells(v.l, v.s)}</tr>`; }).join('')
-    + (() => { const v = fn(accts); return `<tr class="subtotal"><td><b>TOTAL</b></td>${cells(v.l, v.s)}</tr>`; })();
-  const overview = tps.map(tp => {
-    const accts = Object.keys(byTp[tp]).sort((a,b)=>order.indexOf(a)-order.indexOf(b));
-    const real = as => { const t = sumGains(as.flatMap(a=>byTp[tp][a].real)); return { l:t.ltcg, s:t.stcg }; };
-    const opn  = as => { const t = sumOpen(as.flatMap(a=>byTp[tp][a].open));  return { l:t.ltcg, s:t.stcg }; };
-    const all  = as => { const r = real(as), u = opn(as); return { l:r.l+u.l, s:r.s+u.s }; };
-    return `<div class="section-title">${esc(tp)} — ${esc(f.fy||'')}</div>
-    <div class="table-scroll" style="margin-bottom:22px"><table class="cg-ov"><thead><tr>
-      <th></th><th>Account</th><th>LTCG</th><th>STCG</th><th>NETT</th></tr></thead><tbody>
-      ${block(`Realised gain<br><span class="muted" style="font-weight:400">${esc(f.fy||'')}</span>`, accts, real)}
-      ${block('Unrealised gain<br><span class="muted" style="font-weight:400">if sold today</span>', accts, opn)}
-      ${both ? block('Total gain if everything sold today', accts, all) : ''}
-    </tbody></table></div>`;
-  }).join('');
+  const g0 = n => n==null ? '<span class="muted">—</span>' : `<span class="${n>=0?'pl-pos':'pl-neg'}">${n>=0?'+':''}${amt(n)}</span>`;
+  const tpLabel = tp => esc(tp.replace(/ HUF$/, ' (HUF)'));
+  const figs = list => {
+    const r = sumGains(rows.filter(x=>list.includes(x.taxpayer)));
+    const u = sumOpen(open.filter(x=>list.includes(x.taxpayer)));
+    return { real:[r.ltcg, r.stcg], open:[u.ltcg, u.stcg], tot: both ? [r.ltcg+u.ltcg, r.stcg+u.stcg] : [null, null] };
+  };
+  const line = (label, [l, s], cls) => `<tr${cls?` class="${cls}"`:''}><td>${label}</td>`
+    + `<td class="mono">${g0(l)}</td><td class="mono">${g0(s)}</td><td class="mono"><b>${g0(l==null?null:l+s)}</b></td></tr>`;
+  const person = (name, v, cls) => `<tr class="${cls||''}"><td class="blk" rowspan="3">${name}</td>`
+    + line('Realised', v.real).replace(/^<tr>/, '') + line('Unrealised', v.open) + line('Total', v.tot, 'subtotal');
+  const blocks = tps.map(tp => person(tpLabel(tp), figs([tp])));
+  if(tps.length > 1) blocks.push(person('Total', figs(tps), 'cg-grand'));
+  const overview = tps.length ? `<div class="section-title">Capital gains — ${esc(f.fy||'')}</div>
+    <div class="table-scroll" style="margin-bottom:8px"><table class="cg-ov"><thead><tr>
+      <th></th><th></th><th>LTCG</th><th>STCG</th><th>TOTAL</th></tr></thead><tbody>
+      ${blocks.join('')}
+    </tbody></table></div>
+    <div class="table-note" style="margin-bottom:22px">Realised = sales in ${esc(f.fy||'')}. Unrealised = lots still held, if sold today at the current price (no selling charges).
+      ${both ? 'Total = realised + unrealised.' : 'Total is shown only for the current financial year, because unrealised gains are as of today.'}</div>` : '';
 
   return `
   ${overview}
