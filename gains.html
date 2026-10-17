@@ -13,6 +13,9 @@
 .cg-ov th,.cg-ov td{padding:7px 8px;white-space:nowrap}
 .cg-ov td.blk{white-space:normal;width:120px;font-weight:600;vertical-align:middle}
 .cg-ov tr.cg-grand td{border-top:2px solid var(--accent)}
+.cg-room th{white-space:normal;vertical-align:bottom;line-height:1.25}
+.cg-room td.room{white-space:normal}
+@media(max-width:600px){.cg-ov.cg-room{font-size:10px}.cg-ov.cg-room th,.cg-ov.cg-room td{padding:5px 3px;letter-spacing:-.2px}.cg-ov.cg-room td.blk{width:50px}}
 .cg-ov tbody tr:has(td.blk) td{border-top:1px solid var(--border)}
 @media(max-width:600px){.cg-ov{font-size:10.5px}.cg-ov th,.cg-ov td{padding:6px 5px}.cg-ov td.blk{width:64px}.cg-ov .mono{letter-spacing:-.2px}}
 </style>
@@ -54,7 +57,7 @@
   <div id="content"></div>
 </div>
 
-<script src="common.js?v=8"></script>
+<script src="common.js?v=9"></script>
 <script>
 // Reads the Portfolio Ledger (the permanent record). Loading, FIFO matching
 // and the tax rules are shared with the holdings page: common.js
@@ -130,7 +133,8 @@ function openRows() {
       return { portfolio:l.portfolio, taxpayer:taxpayerOf(l.portfolio), name:l.name, isin:l.isin, buyType:l.type,
                buyDate:l.buyDate, days:daysBetween(l.buyDate, today), qty:l.qty, buyRate:l.tradeRate, cmp, cost, value, gain,
                gainPct: gain!=null && cost>0 ? gain/cost*100 : null,
-               term: isLongTerm(l.buyDate, today) ? 'LTCG' : 'STCG' };
+               term: isLongTerm(l.buyDate, today) ? 'LTCG' : 'STCG',
+               ltFrom: longTermFrom(l.buyDate), daysToLT: daysBetween(today, longTermFrom(l.buyDate)) };
     })
     .sort(sorter(f.sort.open));
 }
@@ -207,6 +211,8 @@ function renderGainsBody() {
 
   return `
   ${overview}
+  ${f.fy===curFY ? renderTaxRoom(curFY) : ''}
+  ${renderTurningLT(open)}
   ${realisedWarnings(rows)}
   ${renderByStock(rows, open)}
   ${renderRealised(rows)}
@@ -365,6 +371,101 @@ function renderOpen(rows) {
     </div></div>`).join('')}</div>
   </div>
   <div class="table-note">One row per purchase lot still held. Value = quantity × current price, before selling charges. "If sold today" uses the same 12-month rule as realised gains. A sale always uses the oldest lots in that account first (FIFO), so to book a particular lot you must also sell every older lot of that stock in the same account.</div>`;
+}
+
+// ═══════════════════════════════════════
+// TAX POSITION — current FY: room left in the ₹1.25 lakh LTCG exemption
+// ═══════════════════════════════════════
+// Per person (the HUF is its own taxpayer). Method, shown on the page too:
+//   short-term losses net off short-term gains first (they are summed together);
+//   a net short-term LOSS left over is set off against long-term gains (s.70(3));
+//   the ₹1,25,000 exemption (s.112A, listed equity) applies to the LTCG left.
+// So "net for exemption" N = LTCG + (net STCG if it is a loss). Room to book
+// more LTCG tax-free = ₹1,25,000 − N: a negative N (unused losses) adds to it,
+// assuming no further short-term gains this year (they would use the loss first).
+// Losses brought forward from earlier years are not in the Ledger, so they are
+// not included. Search box is ignored here: it is the person's whole year.
+const LTCG_EXEMPTION = 125000;
+function taxRoom(realRows, openRows_) {
+  const t = sumGains(realRows), u = sumOpen(openRows_);
+  const net = t.ltcg + Math.min(0, t.stcg);
+  return { ltcg:t.ltcg, stcg:t.stcg, net,
+           room:  Math.max(0, LTCG_EXEMPTION - net),
+           above: Math.max(0, net - LTCG_EXEMPTION),
+           openLtcg: u.ltcg };
+}
+function renderTaxRoom(fy) {
+  const f = S.cgFilters, order = ledgerPortfolios();
+  const real = S.realised.filter(r => r.fy===fy && (f.taxpayer==='All' || r.taxpayer===f.taxpayer));
+  const open = (S.openLots||[]).filter(l => f.taxpayer==='All' || taxpayerOf(l.portfolio)===f.taxpayer)
+    .map(l => { const cmp = S.currentPrices[l.isin] ?? null, today = new Date();
+      return { taxpayer:taxpayerOf(l.portfolio), gain: cmp==null ? null : l.qty*(cmp-l.tradeRate),
+               cost:l.qty*l.tradeRate, value: cmp==null ? null : l.qty*cmp, term: isLongTerm(l.buyDate, today) ? 'LTCG' : 'STCG' }; });
+  const tps = [...new Set([...real.map(r=>r.taxpayer), ...open.map(r=>r.taxpayer)])]
+    .sort((a,b)=> order.findIndex(p=>taxpayerOf(p)===a) - order.findIndex(p=>taxpayerOf(p)===b));
+  if(!tps.length) return '';
+  const amt = n => window.innerWidth < 600 ? fmtL(n) : fmtR(n,0);
+  const g0  = n => `<span class="${n>=0?'pl-pos':'pl-neg'}">${n>=0?'+':''}${amt(n)}</span>`;
+  const rowsHtml = tps.map(tp => {
+    const x = taxRoom(real.filter(r=>r.taxpayer===tp), open.filter(r=>r.taxpayer===tp));
+    const roomCell = x.above>0
+      ? `<span style="color:var(--orange)" title="Long-term gain above the exemption">none: ${amt(x.above)} over</span>`
+      : `<b class="pl-pos">${amt(x.room)}</b>`;
+    return `<tr><td class="blk">${esc(tp.replace(/ HUF$/, ' (HUF)'))}</td>
+      <td class="mono">${g0(x.ltcg)}</td>
+      <td class="mono">${g0(x.stcg)}</td>
+      <td class="mono">${g0(x.net)}</td>
+      <td class="mono room">${roomCell}</td>
+      <td class="mono">${g0(x.openLtcg)}</td></tr>`;
+  }).join('');
+  return `<div class="section-title">LTCG exemption room — ${esc(fy)}</div>
+  <div class="table-scroll" style="margin-bottom:8px"><table class="cg-ov cg-room"><thead><tr>
+    <th></th><th title="Long-term gains realised this year, net of long-term losses">Realised LTCG</th>
+    <th title="Short-term gains realised this year, net of short-term losses">Realised STCG</th>
+    <th title="LTCG after setting off a net short-term loss">Net for exemption</th>
+    <th title="₹1,25,000 minus 'Net for exemption': how much more LTCG can be booked tax-free this year">Room to book LTCG tax-free</th>
+    <th title="Long-term gain on lots already held over 12 months, if sold today">Unrealised LTCG today</th>
+  </tr></thead><tbody>${rowsHtml}</tbody></table></div>
+  <div class="table-note" style="margin-bottom:22px">Method: short-term losses net off short-term gains first; a net short-term loss left over is set off against long-term gains; the ₹1,25,000 exemption (listed equity, s.112A) applies to the long-term gain left. "Net for exemption" = realised LTCG + realised STCG when that is a loss. Room = ₹1,25,000 − net for exemption, so this year's unused losses add to it (assuming no more short-term gains this year, which would use the short-term loss first). Each person, including the HUF, has their own exemption.
+    Not included: losses brought forward from earlier years, and gains outside this dashboard (F&amp;O, unlisted shares, ETFs). Gains, not tax.</div>`;
+}
+
+// ═══════════════════════════════════════
+// TURNING LONG-TERM — open lots that cross 12 months in the next 60 days
+// ═══════════════════════════════════════
+const SOON_DAYS = 60, VERY_SOON_DAYS = 30;
+function renderTurningLT(open) {
+  const soon = open.filter(r => r.term==='STCG' && r.daysToLT>0 && r.daysToLT<=SOON_DAYS)
+    .sort((a,b)=> (a.ltFrom-b.ltFrom) || a.name.localeCompare(b.name));
+  const title = `<div class="section-title">Turning long-term in the next ${SOON_DAYS} days</div>`;
+  if(!soon.length) return `${title}<div class="no-data" style="margin-bottom:22px">No lots turn long-term in the next ${SOON_DAYS} days.</div>`;
+  const tot = soon.reduce((s,r)=>s+(r.gain||0),0);
+  const dayTag = r => `<span class="tag ${r.daysToLT<=VERY_SOON_DAYS?'tag-ltcg':'tag-stcg'}">${r.daysToLT} day${r.daysToLT>1?'s':''}</span>`;
+  return `${title}
+  <div class="table-wrap"><table><thead><tr>
+    <th>Stock</th><th>Account</th><th>Qty</th><th>Bought</th><th>Long-term from</th><th>Days left</th><th>Gain if sold today</th><th>Gain %</th>
+  </tr></thead><tbody>
+  ${soon.map(r=>`<tr>
+    <td class="name-cell" title="${esc(r.isin)}">${esc(r.name)}</td>
+    <td>${portLabel(r.portfolio)}</td>
+    <td class="mono">${fmtN(r.qty,0)}</td>
+    <td class="mono">${fmtDate(r.buyDate)}</td>
+    <td class="mono"><b>${fmtDate(r.ltFrom)}</b></td>
+    <td>${dayTag(r)}</td>
+    <td class="mono">${gainSpan(r.gain)}</td>
+    <td class="mono">${pctSpan(r.gainPct)}</td>
+  </tr>`).join('')}
+  </tbody></table>
+  <div class="lot-cards">${soon.map(r=>`<div class="lot-card">
+    <div class="lc-top"><div class="lc-name">${esc(r.name)}</div><div class="lc-pl">${gainSpan(r.gain)} ${pctSpan(r.gainPct)}</div></div>
+    <div class="lc-meta"><span class="port-dot" style="background:${portColor(r.portfolio)}"></span>
+      <span style="color:${portColor(r.portfolio)};font-weight:600">${esc(r.portfolio)}</span> · bought ${fmtDate(r.buyDate)}</div>
+    <div class="lc-tags">${dayTag(r)} <span class="muted">long-term from <b style="color:var(--text)">${fmtDate(r.ltFrom)}</b></span></div>
+    <div class="lc-grid">${lcCell('Qty',fmtN(r.qty,0))}${lcCell('Cost',fmtR(r.cost,0))}${lcCell('Value',r.value!=null?fmtR(r.value,0):'—')}</div>
+  </div>`).join('')}</div>
+  <div class="table-footer"><div>Lots: <span>${soon.length}</span></div><div>Gain if sold today: <span class="${tot>=0?'green':'red'}">${tot>=0?'+':''}${fmtR(tot,0)}</span></div></div>
+  </div>
+  <div class="table-note" style="margin-bottom:22px">A lot sold on or after its "long-term from" date counts as long-term (held more than 12 months); sold earlier, its gain is short-term. Days left ≤ ${VERY_SOON_DAYS} are green. A sale always uses the oldest lots in that account first (FIFO), so these lots can only be sold after the older lots of the same stock in the same account.</div>`;
 }
 
 function updateGains() {

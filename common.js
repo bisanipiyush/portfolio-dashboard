@@ -66,6 +66,13 @@ function isLongTerm(buy, sell) {
   return dayKey(sell) > y*10000 + (m+1)*100 + d;
 }
 const isSTCG = d => !isLongTerm(d, new Date());
+// First day a sale counts as long term: the day after the 12-month anniversary
+// (same calendar rule as isLongTerm; a 29-Feb buy's anniversary is 28-Feb).
+function longTermFrom(buy) {
+  const y = buy.getFullYear()+1, m = buy.getMonth();
+  const d = Math.min(buy.getDate(), new Date(y, m+1, 0).getDate());
+  return new Date(y, m, d+1);
+}
 // Indian financial year (Apr–Mar) a date falls in, e.g. "FY 2026-27"
 const finYear = d => { const y = d.getMonth()>=3 ? d.getFullYear() : d.getFullYear()-1; return `FY ${y}-${String(y+1).slice(2)}`; };
 // Taxpayer = portfolio tab name minus its last word (the broker):
