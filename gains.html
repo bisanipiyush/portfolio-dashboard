@@ -14,6 +14,12 @@
 .cg-ov td.blk{white-space:normal;width:120px;font-weight:600;vertical-align:middle}
 .cg-ov tr.cg-grand td{border-top:2px solid var(--accent)}
 .cg-room th{white-space:normal;vertical-align:bottom;line-height:1.25}
+details.how{margin:4px 0 12px}
+details.how>summary{cursor:pointer;color:var(--accent);font-size:11px;list-style:none;display:inline-block;padding:2px 0}
+details.how>summary::-webkit-details-marker{display:none}
+details.how[open]>summary{margin-bottom:4px}
+.set-off-alert{background:rgba(217,119,6,.10);border:1px solid var(--orange);border-radius:10px;padding:10px 12px;margin:6px 0 10px;font-size:12px;line-height:1.55}
+.set-off-alert b.o{color:var(--orange)}
 .cg-room td.room{white-space:normal}
 @media(max-width:600px){.cg-ov.cg-room{font-size:10px}.cg-ov.cg-room th,.cg-ov.cg-room td{padding:5px 3px;letter-spacing:-.2px}.cg-ov.cg-room td.blk{width:50px}}
 .cg-ov tbody tr:has(td.blk) td{border-top:1px solid var(--border)}
@@ -206,8 +212,8 @@ function renderGainsBody() {
       <th></th><th></th><th>LTCG</th><th>STCG</th><th>TOTAL</th></tr></thead><tbody>
       ${blocks.join('')}
     </tbody></table></div>
-    <div class="table-note" style="margin-bottom:22px">Realised = sales in ${esc(f.fy||'')}. Unrealised = lots still held, if sold today at the current price (no selling charges).
-      ${both ? 'Total = realised + unrealised.' : 'Total is shown only for the current financial year, because unrealised gains are as of today.'}</div>` : '';
+    <details class="how" style="margin-bottom:22px"><summary>ⓘ How is this worked out?</summary><div class="table-note">Realised = sales in ${esc(f.fy||'')}. Unrealised = lots still held, if sold today at the current price (no selling charges).
+      ${both ? 'Total = realised + unrealised.' : 'Total is shown only for the current financial year, because unrealised gains are as of today.'}</div></details>` : '';
 
   return `
   ${overview}
@@ -279,7 +285,7 @@ function renderByStock(rows, open) {
   ${sortPicker('rs')}${stockTable('rs', stockRows(rows, false), 'Sale Value', 'Qty Sold')}
   <div class="section-title" style="margin-top:28px">Unrealised — stock-wise, at today&#39;s price</div>
   ${sortPicker('os')}${stockTable('os', stockRows(open, true), 'Value', 'Qty Held')}
-  <div class="table-note">One row per stock for each person, broking accounts combined (FIFO is still worked out per account). Realised counts only sales with a known cost, not intraday. Detailed sale-by-sale and lot-by-lot tables follow below.</div>`;
+  <details class="how"><summary>ⓘ How is this worked out?</summary><div class="table-note">One row per stock for each person, broking accounts combined (FIFO is still worked out per account). Realised counts only sales with a known cost, not intraday. Detailed sale-by-sale and lot-by-lot tables follow below.</div></details>`;
 }
 
 function realisedWarnings(rows) {
@@ -332,7 +338,7 @@ function renderRealised(rows) {
       ${lcCell('Cost',fmtR(r.cost,0))}${lcCell('Sale value',fmtR(r.saleValue,0))}${lcCell('Sell ₹',fmtN(r.saleRate,2))}
     </div></div>`).join('')}</div>
   </div>
-  <div class="table-note">Sale value = sale amount minus every charge except STT; cost = purchase amount plus every charge except STT (stamp duty included). Bonus shares cost ₹0 from the allotment date; splits keep the original date and cost. LTCG = held more than 12 months.</div>`;
+  <details class="how"><summary>ⓘ How is this worked out?</summary><div class="table-note">Sale value = sale amount minus every charge except STT; cost = purchase amount plus every charge except STT (stamp duty included). Bonus shares cost ₹0 from the allotment date; splits keep the original date and cost. LTCG = held more than 12 months.</div></details>`;
 }
 
 function renderOpen(rows) {
@@ -370,7 +376,7 @@ function renderOpen(rows) {
       ${lcCell('Cost',fmtR(r.cost,0))}${lcCell('Value',fmtR(r.value,0))}${lcCell('Buy ₹',fmtN(r.buyRate,2))}
     </div></div>`).join('')}</div>
   </div>
-  <div class="table-note">One row per purchase lot still held. Value = quantity × current price, before selling charges. "If sold today" uses the same 12-month rule as realised gains. A sale always uses the oldest lots in that account first (FIFO), so to book a particular lot you must also sell every older lot of that stock in the same account.</div>`;
+  <details class="how"><summary>ⓘ How is this worked out?</summary><div class="table-note">One row per purchase lot still held. Value = quantity × current price, before selling charges. "If sold today" uses the same 12-month rule as realised gains. A sale always uses the oldest lots in that account first (FIFO), so to book a particular lot you must also sell every older lot of that stock in the same account.</div></details>`;
 }
 
 // ═══════════════════════════════════════
@@ -394,10 +400,17 @@ function taxRoom(realRows, openRows_, bf) {
   const b = bf || { stcl:0, ltcl:0 };
   const bfStclLeft = Math.max(0, b.stcl - Math.max(0, t.stcg));   // after this year's STCG
   const net = t.ltcg + Math.min(0, t.stcg) - bfStclLeft - b.ltcl;
+  // Short-term losses left after this year's short-term gains (this year's net
+  // loss + b/f STCL not used by them) must be set off against long-term gains:
+  // that part is "absorbed" by gains taxed at the lower rate (with the 1.25L
+  // exemption). Booking short-term gains first would use the loss instead.
+  const stPool   = Math.max(0, -t.stcg) + bfStclLeft;
+  const absorbed = Math.min(stPool, Math.max(0, t.ltcg));
+  const openStGains = openRows_.filter(r => r.term==='STCG' && r.gain>0).reduce((s,r)=>s+r.gain, 0);
   return { ltcg:t.ltcg, stcg:t.stcg, net, bf:b.stcl + b.ltcl,
            room:  Math.max(0, LTCG_EXEMPTION - net),
            above: Math.max(0, net - LTCG_EXEMPTION),
-           openLtcg: u.ltcg };
+           openLtcg: u.ltcg, absorbed, openStGains };
 }
 function renderTaxRoom(fy) {
   const f = S.cgFilters, order = ledgerPortfolios();
@@ -411,8 +424,13 @@ function renderTaxRoom(fy) {
   if(!tps.length) return '';
   const amt = n => window.innerWidth < 600 ? fmtL(n) : fmtR(n,0);
   const g0  = n => `<span class="${n>=0?'pl-pos':'pl-neg'}">${n>=0?'+':''}${amt(n)}</span>`;
+  const alerts = [];
   const rowsHtml = tps.map(tp => {
     const x = taxRoom(real.filter(r=>r.taxpayer===tp), open.filter(r=>r.taxpayer===tp), (S.lossesBF[tp]||{})[fy]);
+    if(x.absorbed > 0) alerts.push(`<div class="set-off-alert"><b>${esc(tp.replace(/ HUF$/, ' (HUF)'))}:</b>
+      <b class="o">${fmtR(x.absorbed,0)}</b> of short-term loss is being set off against long-term gains (taxed at the lower rate, with the ₹1.25 lakh exemption).
+      Booking up to ${fmtR(x.absorbed,0)} of short-term gains before 31 March would use that loss instead.
+      Short-term lots in gain today: <b>${fmtR(x.openStGains,0)}</b>${x.openStGains>0?' (see the Unrealised table, "If sold today" = STCG)':''}.</div>`);
     const roomCell = x.above>0
       ? `<span style="color:var(--orange)" title="Long-term gain above the exemption">none: ${amt(x.above)} over</span>`
       : `<b class="pl-pos">${amt(x.room)}</b>`;
@@ -423,7 +441,11 @@ function renderTaxRoom(fy) {
       <td class="mono room">${roomCell}</td>
       <td class="mono">${g0(x.openLtcg)}</td></tr>`;
   }).join('');
-  return `<div class="section-title">LTCG exemption room — ${esc(fy)}</div>
+  // Year-end: from 1 March, count down to 31 March
+  const now = new Date(), fyEnd = new Date(now.getMonth()>=3 ? now.getFullYear()+1 : now.getFullYear(), 2, 31);
+  const left = daysBetween(new Date(now.getFullYear(), now.getMonth(), now.getDate()), fyEnd);
+  const countdown = now.getMonth()===2 ? ` <span class="tag tag-flag" title="Sales count in this financial year until 31 March">${left} day${left===1?'':'s'} left in ${esc(fy)}</span>` : '';
+  return `<div class="section-title">LTCG exemption room — ${esc(fy)}${countdown}</div>
   <div class="table-scroll" style="margin-bottom:8px"><table class="cg-ov cg-room"><thead><tr>
     <th></th><th title="Long-term gains realised this year, net of long-term losses">Realised LTCG</th>
     <th title="Short-term gains realised this year, net of short-term losses">Realised STCG</th>
@@ -431,8 +453,10 @@ function renderTaxRoom(fy) {
     <th title="₹1,25,000 minus 'Net for exemption': how much more LTCG can be booked tax-free this year">Room to book LTCG tax-free</th>
     <th title="Long-term gain on lots already held over 12 months, if sold today">Unrealised LTCG today</th>
   </tr></thead><tbody>${rowsHtml}</tbody></table></div>
-  <div class="table-note" style="margin-bottom:22px">Method: short-term losses net off short-term gains first; a net short-term loss left over is set off against long-term gains; the ₹1,25,000 exemption (listed equity, s.112A) applies to the long-term gain left. Losses brought forward from filed returns ("b/f loss", from the Losses BF tab of the Live sheet) come next: a b/f short-term loss is used against this year's short-term gains first, the rest against long-term gains; a b/f long-term loss only against long-term gains. "Net for exemption" = realised LTCG + realised STCG when that is a loss − b/f losses left for LTCG. Room = ₹1,25,000 − net for exemption, so unused losses add to it (assuming no more short-term gains this year, which would use the short-term losses first). Each person, including the HUF, has their own exemption.
-    Not included: gains outside this dashboard (F&amp;O, unlisted shares, ETFs). Gains, not tax.</div>`;
+  ${alerts.join('')}
+  <details class="how" style="margin-bottom:22px"><summary>ⓘ How is this worked out?</summary><div class="table-note">Method: short-term losses net off short-term gains first; a net short-term loss left over is set off against long-term gains; the ₹1,25,000 exemption (listed equity, s.112A) applies to the long-term gain left. Losses brought forward from filed returns ("b/f loss", from the Losses BF tab of the Live sheet) come next: a b/f short-term loss is used against this year's short-term gains first, the rest against long-term gains; a b/f long-term loss only against long-term gains. "Net for exemption" = realised LTCG + realised STCG when that is a loss − b/f losses left for LTCG. Room = ₹1,25,000 − net for exemption, so unused losses add to it (assuming no more short-term gains this year, which would use the short-term losses first). Each person, including the HUF, has their own exemption.
+    An orange note appears when short-term losses (this year's, or brought forward and not used by this year's short-term gains) are being set off against long-term gains: the law requires that set-off, so the loss is spent on gains taxed at the lower rate; booking short-term gains first would let it absorb gains taxed at the higher rate instead. A re-bought share starts a new holding period at the new price.
+    Not included: gains outside this dashboard (F&amp;O, unlisted shares, ETFs). Gains, not tax.</div></details>`;
 }
 
 // ═══════════════════════════════════════
@@ -470,7 +494,7 @@ function renderTurningLT(open) {
   </div>`).join('')}</div>
   <div class="table-footer"><div>Lots: <span>${soon.length}</span></div><div>Gain if sold today: <span class="${tot>=0?'green':'red'}">${tot>=0?'+':''}${fmtR(tot,0)}</span></div></div>
   </div>
-  <div class="table-note" style="margin-bottom:22px">A lot sold on or after its "long-term from" date counts as long-term (held more than 12 months); sold earlier, its gain is short-term. Days left ≤ ${VERY_SOON_DAYS} are green. A sale always uses the oldest lots in that account first (FIFO), so these lots can only be sold after the older lots of the same stock in the same account.</div>`;
+  <details class="how" style="margin-bottom:22px"><summary>ⓘ How is this worked out?</summary><div class="table-note">A lot sold on or after its "long-term from" date counts as long-term (held more than 12 months); sold earlier, its gain is short-term. Days left ≤ ${VERY_SOON_DAYS} are green. A sale always uses the oldest lots in that account first (FIFO), so these lots can only be sold after the older lots of the same stock in the same account.</div></details>`;
 }
 
 function updateGains() {
