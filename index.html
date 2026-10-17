@@ -7,7 +7,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="common.css?v=3">
+<link rel="stylesheet" href="common.css?v=4">
 <style>
 /* Positions header (tap targets) and allocation panel */
 .pos-head{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0 0 12px}
@@ -87,7 +87,7 @@
   <div id="content"></div>
 </div>
 
-<script src="common.js?v=10"></script>
+<script src="common.js?v=11"></script>
 <script>
 // ═══════════════════════════════════════
 // STATE
@@ -332,11 +332,14 @@ async function loadSheet() {
   setStatus('Computing positions…');
   compute(wb);
   S.source = 'sheet';
+  S.liveWb = wb;
   showApp();
+  showHealth(healthChecks(S.liveWb, S.livePrices, holdingsIssues()));
   startPriceRefresh(live => {
     S.livePrices = live;
     S.openLots = enrich(S.rawLots);
     updateBadge();
+    showHealth(healthChecks(S.liveWb, S.livePrices, holdingsIssues()));
     if(S.activeTab==='positions') updateTable(); else renderContent();
   }, S.livePrices.pingUrl);
 }
@@ -388,6 +391,22 @@ function updateBadge() {
   document.getElementById('data-badge').innerHTML =
     `<span>${lots}</span> lots · <span>${stocks}</span> stocks · <span>${priced}</span> priced`;
   if(S.source==='sheet') showPriceAge(S.livePrices.asOf);
+}
+
+// Data issues the holdings page can see, for the health dot
+function holdingsIssues() {
+  const out = [];
+  if(S.errors.length) out.push({ name:'Positions (FIFO)', level:'warn',
+    detail:`${S.errors.length} problem${S.errors.length>1?'s':''}, e.g. ${S.errors[0].portfolio}: ${S.errors[0].msg}` });
+  const names = ls => [...new Set(ls.map(l=>l.name))];
+  const unpriced = S.openLots.filter(l=>!l.currentPrice);
+  if(unpriced.length) out.push({ name:'Prices', level:'warn',
+    detail:`${names(unpriced).length} stock${names(unpriced).length>1?'s have':' has'} no current price: ${names(unpriced).join(', ')}` });
+  const noBucket = S.openLots.filter(l=>!l.bucket);
+  if(noBucket.length) out.push({ name:'Buckets', level:'warn',
+    detail:`${names(noBucket).length} stock${names(noBucket).length>1?'s have':' has'} no bucket in Stock Details: ${names(noBucket).join(', ')}` });
+  if(!out.length) out.push({ name:'Positions data', level:'ok', detail:`${S.openLots.length} lots: all matched, priced and bucketed.` });
+  return out;
 }
 
 function showApp() {

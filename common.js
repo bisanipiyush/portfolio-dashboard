@@ -396,22 +396,28 @@ function parseLivePrices(wb) {
     const num = v => typeof v==='number' ? v : null;
     out.byIsin[isin] = { ltp, prevClose:num(r[cp]), chg:num(r[cc]), chgPct:num(r[cpc]) };
   }
-  // asOf is "dd-mm-yyyy HH:mm": compare as yyyymmddHHmm, not as text. Sheets
-  // may have turned the text into a date serial (wall-clock time, as written).
-  const stamp = v => {
-    if(typeof v!=='number') return String(v??'').trim();
-    const d = new Date(Math.round((v-25569)*1440)*60000);
-    return `${pad2(d.getUTCDate())}-${pad2(d.getUTCMonth()+1)}-${d.getUTCFullYear()} ${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}`;
-  };
   const key = s => s.replace(/^(\d{2})-(\d{2})-(\d{4}) (\d{2}):(\d{2})$/, '$3$2$1$4$5');
-  out.asOf = Object.keys(out.byIsin).length ? rows.slice(1).map(r => cu>=0 ? stamp(r[cu]) : '')
+  out.asOf = Object.keys(out.byIsin).length ? rows.slice(1).map(r => cu>=0 ? sheetStamp(r[cu]) : '')
     .filter(Boolean).sort((a,b) => key(a)<key(b)?1:-1)[0] || '' : '';
-  for(const r of rows) if(String(r[12]??'').trim()==='Web app') {
-    const u = String(r[13]??'').trim();
-    if(/^https:\/\/script\.google\.com\//.test(u)) out.pingUrl = u;
+  // Script status cells M1:N3 — Last run / Result / Web app
+  for(const r of rows) {
+    const k = String(r[12]??'').trim(), v = r[13];
+    if(k==='Web app' && /^https:\/\/script\.google\.com\//.test(String(v??'').trim())) out.pingUrl = String(v).trim();
+    if(k==='Last run') out.lastRun = sheetStamp(v);
+    if(k==='Result')   out.result  = String(v??'').trim();
   }
   return out;
 }
+
+// "dd-mm-yyyy HH:mm" text, or the date serial Sheets may have turned it into
+// (wall-clock time as written) → "dd-mm-yyyy HH:mm".
+function sheetStamp(v) {
+  if(typeof v!=='number') return String(v??'').trim();
+  const d = new Date(Math.round((v-25569)*1440)*60000);
+  return `${pad2(d.getUTCDate())}-${pad2(d.getUTCMonth()+1)}-${d.getUTCFullYear()} ${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}`;
+}
+const stampDate = s => { const m = String(s||'').match(/^(\d{2})-(\d{2})-(\d{4}) (\d{2}):(\d{2})$/);
+  return m ? new Date(+m[3], +m[2]-1, +m[1], +m[4], +m[5]) : null; };
 
 // "Prices 11:35" for the header; flagged when older than 30 minutes on a
 // weekday during market hours (the Apps Script refreshes every 5 minutes).
@@ -429,6 +435,95 @@ function priceAgeHtml(asOf) {
 
 // "prices 11:35" next to the Reload button, on every screen size (the lot
 // badge beside it is hidden on phones). Created on first use.
+// ═══════════════════════════════════════
+// HEALTH DOT — is everything behind the dashboard working?
+// ═══════════════════════════════════════
+// Sources: the Live sheet's "Health" tab (one line per job, written by the
+// daily sync, the screener refresh and the CAS tool), the Prices tab's status
+// cells (Apps Script), plus data issues the page itself found (pageIssues:
+// [{name, level, detail}]). A small green dot when all is well; a bigger,
+// pulsing dot with a count when something needs a look. Tap → the list.
+function healthChecks(liveWb, live, pageIssues) {
+  const out = [], now = new Date(), hrs = d => d ? (now-d)/3600000 : Infinity;
+  const rows = liveWb && liveWb.Sheets['Health'] ? XLSX.utils.sheet_to_json(liveWb.Sheets['Health'], {header:1, defval:null, raw:true}).slice(1) : [];
+  const line = name => { const r = rows.find(x => String(x[0]??'').trim()===name);
+    return r ? { when:sheetStamp(r[1]), result:String(r[2]??'').trim(), detail:String(r[3]??''), period:String(r[4]??'').trim() } : null; };
+  const job = (name, label, maxHrs, late) => {
+    const l = line(name);
+    if(!l) return out.push({ name:label, level:'warn', detail:'No status yet (written by its next run).' });
+    const age = hrs(stampDate(l.when));
+    if(l.result==='FAIL') return out.push({ name:label, level:'fail', detail:l.detail, when:l.when });
+    if(age > maxHrs)      return out.push({ name:label, level:'warn', detail:late, when:l.when });
+    out.push({ name:label, level:'ok', detail:l.detail, when:l.when });
+  };
+  job('Contract-note sync', 'Daily contract-note sync', 30, 'Has not run in the last 30 hours.');
+  job('Screener refresh', 'Weekly screener refresh', 8*24, 'Has not run in the last 8 days.');
+
+  // Live prices: script status cells in the Prices tab
+  if(!live || !live.lastRun) out.push({ name:'Live prices', level:'warn', detail:'No price status in the Prices tab.' });
+  else {
+    const m = String(live.result||'').match(/^OK: (\d+) of (\d+)/), hhmm = now.getHours()*100+now.getMinutes();
+    const market = now.getDay()>=1 && now.getDay()<=5 && hhmm>=930 && hhmm<=1545;
+    const age = hrs(stampDate(live.lastRun))*60;
+    if(/^ERROR/.test(live.result||'')) out.push({ name:'Live prices', level:'fail', detail:live.result, when:live.lastRun });
+    else if(market && age > 35)        out.push({ name:'Live prices', level:'warn', detail:`Not updated for ${Math.round(age)} minutes during market hours.`, when:live.lastRun });
+    else if(m && +m[1] < +m[2])        out.push({ name:'Live prices', level:'warn', detail:live.result, when:live.lastRun });
+    else out.push({ name:'Live prices', level:'ok', detail:live.result||'OK', when:live.lastRun });
+  }
+
+  // CAS reconciliation, per holder: month M's CAS arrives by about the 20th of M+1
+  const expect = new Date(now.getFullYear(), now.getMonth() - (now.getDate()>=20 ? 1 : 2), 1);
+  const expKey = `${expect.getFullYear()}-${pad2(expect.getMonth()+1)}`;
+  const expLbl = expect.toLocaleString('en-IN', { month:'short', year:'numeric' });
+  const cas = rows.filter(r => String(r[0]??'').startsWith('CAS reconciliation: '));
+  if(!cas.length) out.push({ name:'CAS reconciliation', level:'warn', detail:'No status yet (written when the CAS check runs).' });
+  for(const r of cas) {
+    const who = String(r[0]).replace('CAS reconciliation: ',''), l = line(String(r[0]));
+    const level = l.result==='WARN' || l.result==='FAIL' ? 'warn' : (l.period && l.period < expKey ? 'warn' : 'ok');
+    out.push({ name:`CAS check: ${who}`, level, when:l.when,
+      detail: l.period && l.period < expKey && level==='warn' && l.result==='OK' ? `${expLbl} CAS not checked yet (last: ${l.detail.split(' CAS')[0]}).` : l.detail });
+  }
+  for(const p of (pageIssues||[])) out.push(p);
+  return out;
+}
+
+function showHealth(checks) {
+  S.healthChecks = checks;
+  let el = document.getElementById('health-dot');
+  if(!el) {
+    const right = document.querySelector('#app .topbar-right'); if(!right) return;
+    el = document.createElement('button'); el.id = 'health-dot'; el.type = 'button';
+    el.addEventListener('click', openHealthPanel);
+    right.insertBefore(el, right.firstChild);
+  }
+  const fail = checks.filter(c=>c.level==='fail').length, warn = checks.filter(c=>c.level==='warn').length;
+  const level = fail ? 'fail' : warn ? 'warn' : 'ok', n = fail + warn;
+  el.className = 'health-dot ' + level;
+  el.title = level==='ok' ? 'All checks OK — tap for details' : `${n} check${n>1?'s':''} need${n>1?'':'s'} a look — tap for details`;
+  el.setAttribute('aria-label', el.title);
+  el.innerHTML = level==='ok' ? '<span class="hd-dot"></span>' : `<span class="hd-dot"></span><b>${n}</b>`;
+}
+
+function openHealthPanel() {
+  const checks = S.healthChecks || [];
+  const icon = { ok:'●', warn:'▲', fail:'■' };
+  const order = { fail:0, warn:1, ok:2 };
+  const ov = document.createElement('div');
+  ov.className = 'health-overlay';
+  ov.innerHTML = `<div class="health-panel" role="dialog" aria-label="Health checks">
+    <div class="hp-head"><b>Health checks</b><button class="hp-close" aria-label="Close">✕</button></div>
+    <div class="hp-list">${checks.slice().sort((a,b)=>order[a.level]-order[b.level]).map(c=>`
+      <div class="hp-row ${c.level}"><span class="hp-icon">${icon[c.level]}</span>
+        <div><div class="hp-name">${esc(c.name)}${c.when?` <span class="hp-when">${esc(c.when)}</span>`:''}</div>
+        <div class="hp-detail">${esc(c.detail||'')}</div></div></div>`).join('')}</div>
+  </div>`;
+  const onKey = e => { if(e.key==='Escape') close(); };
+  const close = () => { ov.remove(); document.removeEventListener('keydown', onKey); };
+  ov.addEventListener('click', e => { if(e.target===ov || e.target.closest('.hp-close')) close(); });
+  document.addEventListener('keydown', onKey);
+  document.body.appendChild(ov);
+}
+
 function showPriceAge(asOf) {
   let el = document.getElementById('price-age');
   if(!el) {
@@ -515,6 +610,21 @@ async function loadLedgerData(withPrices) {
   S.pricesAsOf    = lp.asOf;
   S.pricePingUrl  = lp.pingUrl;
   S.lossesBF      = withPrices ? parseLossesBF(live) : {};
+  S.liveWb        = withPrices ? live : null;
+  S.livePriceInfo = withPrices ? lp : null;
+}
+
+// Data issues the Ledger pages can see, for the health dot
+function ledgerIssues() {
+  const out = [];
+  const errs = S.ledgerErrors || [];
+  if(errs.length) out.push({ name:'Ledger rows', level:'warn',
+    detail:`${errs.length} row${errs.length>1?'s':''} could not be read, e.g. ${errs[0].portfolio}: ${errs[0].msg}` });
+  const miss = (S.realised||[]).filter(r => r.flags && r.flags.includes('Buy missing'));
+  if(miss.length) out.push({ name:'Sales without a purchase', level:'warn',
+    detail:`${miss.length} sale${miss.length>1?'s':''} have no matching buy in the Ledger: ${[...new Set(miss.map(r=>r.name))].slice(0,5).join(', ')}` });
+  if(!out.length) out.push({ name:'Ledger data', level:'ok', detail:`${(S.ledgerTxs||[]).length} rows read; every sale matched to purchases.` });
+  return out;
 }
 
 // Sign-in screen → page, for the Ledger pages. render() draws #content.
@@ -527,11 +637,14 @@ function initLedgerPage(render, withPrices) {
     const badgeAll = () => { badge(); if(withPrices) showPriceAge(S.pricesAsOf); };
     badgeAll();
     render();
+    if(withPrices) showHealth(healthChecks(S.liveWb, S.livePriceInfo, ledgerIssues()));
     // Unrealised gains follow the live prices while the page stays open
     if(withPrices) startPriceRefresh(live => {
       for(const [isin, p] of Object.entries(live.byIsin)) S.currentPrices[isin] = p.ltp;
       if(live.asOf) S.pricesAsOf = live.asOf;
+      S.livePriceInfo = live;
       badgeAll(); render();
+      showHealth(healthChecks(S.liveWb, S.livePriceInfo, ledgerIssues()));
     }, S.pricePingUrl);
     // On a phone the tab row scrolls sideways — bring this page's tab into view
     document.querySelector('.nav-tab.active')?.scrollIntoView({ inline:'center', block:'nearest' });
