@@ -23,6 +23,17 @@ details.how[open]>summary{margin-bottom:4px}
 .cg-room td.room{white-space:normal}
 @media(max-width:600px){.cg-ov.cg-room{font-size:10px}.cg-ov.cg-room th,.cg-ov.cg-room td{padding:5px 3px;letter-spacing:-.2px}.cg-ov.cg-room td.blk{width:50px}}
 .cg-ov tbody tr:has(td.blk) td{border-top:1px solid var(--border)}
+/* Stock-wise rows open with + to show the transactions behind them */
+.cg-tg{width:22px;height:22px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--accent);font:600 14px/1 var(--mono);cursor:pointer;padding:0}
+.cg-tg:hover{border-color:var(--accent)}
+tr.cg-opened td{background:rgba(255,255,255,.03)}
+tr.cg-sub>td{padding:0 11px 12px;background:rgba(255,255,255,.03)}
+table.cg-lots{border:1px solid var(--border);border-radius:8px;font-size:11px}
+table.cg-lots thead th{background:var(--surface);padding:6px 9px;font-size:9px;cursor:default}
+table.cg-lots td{padding:6px 9px}
+.cg-tg-m{margin-top:10px;background:none;border:1px solid var(--border);border-radius:7px;color:var(--accent);font:500 12px var(--font);padding:7px 12px;cursor:pointer}
+.cg-sub-cards{margin-top:10px;border-left:2px solid var(--accent);padding-left:4px}
+.cg-sub-cards .lot-card{padding:10px 10px}
 @media(max-width:600px){.cg-ov{font-size:10.5px}.cg-ov th,.cg-ov td{padding:6px 5px}.cg-ov td.blk{width:64px}.cg-ov .mono{letter-spacing:-.2px}}
 </style>
 </head>
@@ -80,6 +91,7 @@ const FLAG_HELP = {
   'Buy missing': 'No matching purchase in the Portfolio Ledger (history not loaded yet, or a rights / IPO / bonus / split entry is missing). Cost unknown, so it is left out of the totals.',
   'Intraday':    'Bought and sold on the same day: speculative business income, not capital gains. Left out of the STCG/LTCG totals.',
   'Pre-2018':    'Bought before 1-Feb-2018, so the 31-Jan-2018 market price (grandfathering) may apply. Shown at actual cost; check before filing.',
+  'No price':    'No current price in the Live sheet or screener, so this lot is left out of the unrealised totals.',
 };
 const flagTags = r => r.flags.map(f=>`<span class="tag tag-flag" title="${esc(FLAG_HELP[f])}">${esc(f)}</span>`).join(' ');
 // A row counts towards STCG/LTCG only with a known cost and not intraday
@@ -220,53 +232,111 @@ function renderGainsBody() {
   ${f.fy===curFY ? renderTaxRoom(curFY) : ''}
   ${renderTurningLT(open)}
   ${realisedWarnings(rows)}
-  ${renderByStock(rows, open)}
-  ${renderRealised(rows)}
-  ${renderOpen(open)}`;
+  ${renderByStock(rows, open)}`;
 }
 
 // ═══════════════════════════════════════
 // STOCK-WISE (scrip-wise) — one row per person + stock, accounts combined
 // ═══════════════════════════════════════
 // Sums of the FIFO results (FIFO stays per broking account). Realised rows
-// count only matches in the totals (known cost, not intraday); unrealised rows
-// without a current price are left out and flagged on the lot table.
+// count only matches in the totals (known cost, not intraday); unrealised lots
+// without a current price are left out. Every match / lot, counted or not,
+// sits behind the row's + (Piyush, 17-10-2026: stock-wise, details on a tap).
 function stockRows(list, isOpen) {
   const m = {};
   for(const r of list) {
-    if(isOpen ? r.gain==null : !inTotals(r)) continue;
     const k = r.taxpayer+'|'+r.isin;
-    const x = m[k] ??= { taxpayer:r.taxpayer, isin:r.isin, name:r.name, accts:new Set(), qty:0, cost:0, value:0, ltcg:0, stcg:0 };
-    x.name = r.name; x.accts.add(r.portfolio); x.qty += r.qty; x.cost += r.cost;
+    const x = m[k] ??= { taxpayer:r.taxpayer, isin:r.isin, name:r.name, accts:new Set(), lots:[], flags:new Set(),
+                         n:0, qty:0, cost:0, value:0, ltcg:0, stcg:0 };
+    x.name = r.name; x.accts.add(r.portfolio); x.lots.push(r);
+    if(isOpen) { if(r.gain==null) x.flags.add('No price'); } else r.flags.forEach(fl=>x.flags.add(fl));
+    if(isOpen ? r.gain==null : !inTotals(r)) continue;
+    x.n++; x.qty += r.qty; x.cost += r.cost;
     x.value += isOpen ? r.value : r.saleValue;
     x[r.term==='LTCG'?'ltcg':'stcg'] += r.gain;
   }
-  return Object.values(m).map(x => ({ ...x, accounts:[...x.accts].join(', '), gain:x.ltcg+x.stcg,
-    gainPct: x.cost>0 ? (x.ltcg+x.stcg)/x.cost*100 : null }));
+  return Object.values(m).map(x => ({ ...x, accounts:[...x.accts].join(', '),
+    ...(x.n ? {} : { qty:null, cost:null, value:null, ltcg:null, stcg:null }),   // nothing countable: show —
+    gain: x.n ? x.ltcg+x.stcg : null, gainPct: x.n && x.cost>0 ? (x.ltcg+x.stcg)/x.cost*100 : null,
+    lots: x.lots.sort(isOpen ? (a,b)=>(a.buyDate-b.buyDate) || a.portfolio.localeCompare(b.portfolio)
+                             : (a,b)=>(a.sellDate-b.sellDate) || ((a.buyDate||0)-(b.buyDate||0))) }));
+}
+
+// Which stock rows are opened (+). Kept while filters / sorting change.
+S.cgOpen = new Set();
+function toggleStock(id) { S.cgOpen.has(id) ? S.cgOpen.delete(id) : S.cgOpen.add(id); updateGains(); }
+const termTag = t => t==='—' ? '—' : `<span class="tag tag-${t==='STCG'?'stcg':'ltcg'}">${t}</span>`;
+const dash = (n, s) => n==null ? '<span class="muted">—</span>' : s;
+const typeNote = r => r.buyType&&r.buyType!=='Buy' ? ` <span class="muted">(${esc(r.buyType)})</span>` : '';
+
+// The transactions behind one stock row: each sale matched to its purchase
+// (realised), or each lot still held (unrealised)
+function lotTable(isOpen, lots) {
+  const head = isOpen
+    ? ['Account','Buy Date','Days','Qty','Buy ₹','CMP','Cost','Value','Gain ₹','Gain %','If sold today']
+    : ['Account','Buy Date','Sell Date','Days','Qty','Buy ₹','Sell ₹','Cost','Sale Value','Gain ₹','Gain %','Term','Flags'];
+  const row = r => isOpen
+    ? `<td>${portLabel(r.portfolio)}</td><td class="mono">${fmtDate(r.buyDate)}${typeNote(r)}</td><td class="mono">${r.days}</td>
+       <td class="mono">${fmtN(r.qty,0)}</td><td class="mono">${fmtN(r.buyRate,2)}</td><td class="mono">${r.cmp!=null?fmtN(r.cmp,2):'—'}</td>
+       <td class="mono">${fmtR(r.cost)}</td><td class="mono">${r.value!=null?fmtR(r.value):'—'}</td><td class="mono">${gainSpan(r.gain)}</td>
+       <td class="mono">${pctSpan(r.gainPct)}</td><td>${termTag(r.term)}${r.cmp==null?' <span class="tag tag-flag" title="'+esc(FLAG_HELP['No price'])+'">No price</span>':''}</td>`
+    : `<td>${portLabel(r.portfolio)}</td><td class="mono">${r.buyDate?fmtDate(r.buyDate):'—'}${typeNote(r)}</td>
+       <td class="mono">${fmtDate(r.sellDate)}</td><td class="mono">${r.days??'—'}</td><td class="mono">${fmtN(r.qty,0)}</td>
+       <td class="mono">${r.buyRate!=null?fmtN(r.buyRate,2):'—'}</td><td class="mono">${fmtN(r.saleRate,2)}</td>
+       <td class="mono">${r.cost!=null?fmtR(r.cost):'—'}</td><td class="mono">${fmtR(r.saleValue)}</td><td class="mono">${gainSpan(r.gain)}</td>
+       <td class="mono">${pctSpan(r.gainPct)}</td><td>${termTag(r.term)}</td><td>${flagTags(r)}</td>`;
+  return `<table class="cg-lots"><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
+    <tbody>${lots.map(r=>`<tr>${row(r)}</tr>`).join('')}</tbody></table>`;
+}
+// Phone: the same transactions as small cards
+function lotCards(isOpen, lots) {
+  return lots.map(r=>`<div class="lot-card">
+    <div class="lc-top"><div class="lc-meta" style="margin:0"><span class="port-dot" style="background:${portColor(r.portfolio)}"></span>
+      <span style="color:${portColor(r.portfolio)};font-weight:600">${esc(r.portfolio)}</span> · ${isOpen?`bought ${fmtDate(r.buyDate)}`:`sold ${fmtDate(r.sellDate)}`}</div>
+      <div class="lc-pl">${gainSpan(r.gain)} ${pctSpan(r.gainPct)}</div></div>
+    <div class="lc-tags">${termTag(r.term)==='—'?'':termTag(r.term)}${isOpen ? (r.cmp==null?'<span class="tag tag-flag">No price</span>':'') : flagTags(r)}</div>
+    <div class="lc-grid">${isOpen
+      ? `${lcCell('Qty',fmtN(r.qty,0))}${lcCell('Days',r.days)}${lcCell('CMP',r.cmp!=null?fmtN(r.cmp,2):'—')}
+         ${lcCell('Cost',fmtR(r.cost,0))}${lcCell('Value',r.value!=null?fmtR(r.value,0):'—')}${lcCell('Buy ₹',fmtN(r.buyRate,2))}`
+      : `${lcCell('Qty',fmtN(r.qty,0))}${lcCell('Bought',r.buyDate?fmtDate(r.buyDate):'—')}${lcCell('Days',r.days??'—')}
+         ${lcCell('Cost',r.cost!=null?fmtR(r.cost,0):'—')}${lcCell('Sale value',fmtR(r.saleValue,0))}${lcCell('Sell ₹',fmtN(r.saleRate,2))}`}
+    </div></div>`).join('');
 }
 
 function stockTable(key, list, valueLabel, qtyLabel) {
+  const isOpen = key==='os';
   const rows = list.sort(sorter(S.cgFilters.sort[key]));
   if(!rows.length) return `<div class="no-data">Nothing to show for these filters.</div>`;
-  return `<div class="table-wrap"><table><thead><tr>
+  const id = r => key+'|'+r.taxpayer+'|'+r.isin;
+  const btn = (r, cls) => { const open = S.cgOpen.has(id(r)), n = r.lots.length;
+    return `<button class="${cls}" data-k="${esc(id(r))}" onclick="toggleStock(this.dataset.k)"
+      title="${open?'Hide':'Show'} the ${n} ${isOpen?'lot':'sale'}${n>1?'s':''} behind this row">${cls==='cg-tg'?(open?'−':'+')
+      :(open?'− Hide':`+ ${n} ${isOpen?'lot':'transaction'}${n>1?'s':''}`)}</button>`; };
+  const flagsOf = r => [...r.flags].map(fl=>`<span class="tag tag-flag" title="${esc(FLAG_HELP[fl])}">${esc(fl)}</span>`).join(' ');
+  return `<div class="table-wrap"><table><thead><tr><th style="width:1%;cursor:default"></th>
     ${th(key,'name','Stock')}${th(key,'taxpayer','Portfolio')}<th>Accounts</th>${th(key,'qty',qtyLabel)}
     ${th(key,'cost','Cost')}${th(key,'value',valueLabel)}${th(key,'ltcg','LTCG')}${th(key,'stcg','STCG')}${th(key,'gain','Gain ₹')}${th(key,'gainPct','Gain %','Gain ÷ cost')}
   </tr></thead><tbody>
-  ${rows.map(r=>`<tr>
-    <td class="name-cell" title="${esc(r.isin)}">${esc(r.name)}</td><td>${esc(r.taxpayer)}</td>
+  ${rows.map(r=>`<tr${S.cgOpen.has(id(r))?' class="cg-opened"':''}>
+    <td>${btn(r,'cg-tg')}</td>
+    <td class="name-cell" title="${esc(r.isin)}">${esc(r.name)}${r.flags.size?' '+flagsOf(r):''}</td><td>${esc(r.taxpayer)}</td>
     <td>${r.accounts.split(', ').map(portLabel).join(' ')}</td>
-    <td class="mono">${fmtN(r.qty,0)}</td><td class="mono">${fmtR(r.cost)}</td><td class="mono">${fmtR(r.value)}</td>
+    <td class="mono">${dash(r.qty,fmtN(r.qty,0))}</td><td class="mono">${dash(r.cost,fmtR(r.cost))}</td><td class="mono">${dash(r.value,fmtR(r.value))}</td>
     <td class="mono">${gainSpan(r.ltcg)}</td><td class="mono">${gainSpan(r.stcg)}</td>
     <td class="mono"><b>${gainSpan(r.gain)}</b></td><td class="mono">${pctSpan(r.gainPct)}</td>
-  </tr>`).join('')}
+  </tr>${S.cgOpen.has(id(r)) ? `<tr class="cg-sub"><td></td><td colspan="10">${lotTable(isOpen, r.lots)}</td></tr>` : ''}`).join('')}
   </tbody></table>
   <div class="lot-cards">${rows.map(r=>`<div class="lot-card">
     <div class="lc-top"><div class="lc-name">${esc(r.name)}</div><div class="lc-pl">${gainSpan(r.gain)} ${pctSpan(r.gainPct)}</div></div>
     <div class="lc-meta">${esc(r.taxpayer)} · ${esc(r.accounts)}</div>
+    ${r.flags.size?`<div class="lc-tags">${flagsOf(r)}</div>`:''}
     <div class="lc-grid">
-      ${lcCell(qtyLabel,fmtN(r.qty,0))}${lcCell('Cost',fmtR(r.cost,0))}${lcCell(valueLabel,fmtR(r.value,0))}
+      ${lcCell(qtyLabel,dash(r.qty,fmtN(r.qty,0)))}${lcCell('Cost',dash(r.cost,fmtR(r.cost,0)))}${lcCell(valueLabel,dash(r.value,fmtR(r.value,0)))}
       ${lcCell('LTCG',gainSpan(r.ltcg))}${lcCell('STCG',gainSpan(r.stcg))}${lcCell('Gain %',pctSpan(r.gainPct))}
-    </div></div>`).join('')}</div></div>`;
+    </div>
+    ${btn(r,'cg-tg-m')}
+    ${S.cgOpen.has(id(r)) ? `<div class="cg-sub-cards">${lotCards(isOpen, r.lots)}</div>` : ''}
+    </div>`).join('')}</div></div>`;
 }
 
 // Phone: the tables become cards, so the sort is also offered as a dropdown
@@ -280,12 +350,20 @@ function sortPicker(key) {
 
 function renderByStock(rows, open) {
   const f = S.cgFilters;
+  const realised = !f.fy ? `<div class="no-data">No sales recorded in the Portfolio Ledger yet.</div>`
+    : !rows.length ? `<div class="no-data">No sales in ${esc(f.fy)} match these filters.</div>`
+    : `${sortPicker('rs')}${stockTable('rs', stockRows(rows, false), 'Sale Value', 'Qty Sold')}`;
+  const noPrice = open.filter(r=>r.cmp==null);
+  const unrealised = !open.length ? `<div class="no-data">No open holdings match these filters.</div>`
+    : `${noPrice.length?`<div class="flag-box"><div class="flag-line"><span class="tag tag-flag">No price</span> ${noPrice.length} lot${noPrice.length>1?'s':''} (${[...new Set(noPrice.map(r=>esc(r.name)))].join(', ')}) have no current price in the Live sheet or screener, so they are <b>not in the unrealised totals</b>.</div></div>`:''}
+      ${sortPicker('os')}${stockTable('os', stockRows(open, true), 'Value', 'Qty Held')}`;
   return `
   <div class="section-title">Realised — stock-wise ${esc(f.fy||'')}</div>
-  ${sortPicker('rs')}${stockTable('rs', stockRows(rows, false), 'Sale Value', 'Qty Sold')}
+  ${realised}
+  <details class="how"><summary>ⓘ How is this worked out?</summary><div class="table-note">One row per stock for each person, broking accounts combined (FIFO is still worked out per account). Tap + to see every sale matched to its purchase. Sale value = sale amount minus every charge except STT; cost = purchase amount plus every charge except STT (stamp duty included). Bonus shares cost ₹0 from the allotment date; splits keep the original date and cost. LTCG = held more than 12 months. The row totals count only sales with a known cost and not intraday; flagged sales are still listed under +.</div></details>
   <div class="section-title" style="margin-top:28px">Unrealised — stock-wise, at today&#39;s price</div>
-  ${sortPicker('os')}${stockTable('os', stockRows(open, true), 'Value', 'Qty Held')}
-  <details class="how"><summary>ⓘ How is this worked out?</summary><div class="table-note">One row per stock for each person, broking accounts combined (FIFO is still worked out per account). Realised counts only sales with a known cost, not intraday. Detailed sale-by-sale and lot-by-lot tables follow below.</div></details>`;
+  ${unrealised}
+  <details class="how"><summary>ⓘ How is this worked out?</summary><div class="table-note">One row per stock for each person, broking accounts combined. Tap + to see every purchase lot still held. Value = quantity × current price, before selling charges. "If sold today" uses the same 12-month rule as realised gains. A sale always uses the oldest lots in that account first (FIFO), so to book a particular lot you must also sell every older lot of that stock in the same account.</div></details>`;
 }
 
 function realisedWarnings(rows) {
@@ -298,85 +376,6 @@ function realisedWarnings(rows) {
   if(pre2018.length)  warn.push(`<div class="flag-line"><span class="tag tag-flag">Pre-2018</span> ${pre2018.length} LTCG match${pre2018.length>1?'es':''} on shares bought before 1-Feb-2018. Grandfathering may apply; shown at actual cost.</div>`);
 
   return warn.length ? `<div class="flag-box">${warn.join('')}</div>` : '';
-}
-
-function renderRealised(rows) {
-  const f = S.cgFilters;
-  if(!f.fy) return `<div class="no-data">No sales recorded in the Portfolio Ledger yet.</div>`;
-  if(!rows.length) return `<div class="section-title">Realised — ${esc(f.fy)}</div><div class="no-data">No sales in ${esc(f.fy)} match these filters.</div>`;
-
-  return `
-  <div class="section-title" style="margin-top:28px">Realised — every sale, matched to its purchase (FIFO)</div>
-  <div class="table-wrap"><table><thead><tr>
-    ${th('real','name','Stock')}${th('real','portfolio','Account')}${th('real','buyDate','Buy Date')}${th('real','sellDate','Sell Date')}${th('real','days','Days')}${th('real','qty','Qty')}
-    <th>Buy ₹</th><th>Sell ₹</th>${th('real','cost','Cost')}${th('real','saleValue','Sale Value')}${th('real','gain','Gain ₹')}${th('real','gainPct','Gain %','Gain ÷ cost')}${th('real','term','Term')}<th>Flags</th>
-  </tr></thead><tbody>
-  ${rows.map(r=>`<tr>
-    <td class="name-cell" title="${esc(r.isin)}">${esc(r.name)}</td>
-    <td>${portLabel(r.portfolio)}</td>
-    <td class="mono">${r.buyDate?fmtDate(r.buyDate):'—'}${r.buyType&&r.buyType!=='Buy'?` <span class="muted">(${esc(r.buyType)})</span>`:''}</td>
-    <td class="mono">${fmtDate(r.sellDate)}</td>
-    <td class="mono">${r.days??'—'}</td>
-    <td class="mono">${fmtN(r.qty,0)}</td>
-    <td class="mono">${r.buyRate!=null?fmtN(r.buyRate,2):'—'}</td>
-    <td class="mono">${fmtN(r.saleRate,2)}</td>
-    <td class="mono">${fmtR(r.cost)}</td>
-    <td class="mono">${fmtR(r.saleValue)}</td>
-    <td class="mono">${gainSpan(r.gain)}</td>
-    <td class="mono">${pctSpan(r.gainPct)}</td>
-    <td>${r.term==='—'?'—':`<span class="tag tag-${r.term==='STCG'?'stcg':'ltcg'}">${r.term}</span>`}</td>
-    <td>${flagTags(r)}</td>
-  </tr>`).join('')}
-  </tbody></table>
-  <div class="lot-cards">${rows.map(r=>`<div class="lot-card">
-    <div class="lc-top"><div class="lc-name">${esc(r.name)}</div><div class="lc-pl">${gainSpan(r.gain)} ${pctSpan(r.gainPct)}</div></div>
-    <div class="lc-meta"><span class="port-dot" style="background:${portColor(r.portfolio)}"></span>
-      <span style="color:${portColor(r.portfolio)};font-weight:600">${esc(r.portfolio)}</span> · sold ${fmtDate(r.sellDate)}</div>
-    <div class="lc-tags">${r.term==='—'?'':`<span class="tag tag-${r.term==='STCG'?'stcg':'ltcg'}">${r.term}</span>`}${flagTags(r)}</div>
-    <div class="lc-grid">
-      ${lcCell('Qty',fmtN(r.qty,0))}${lcCell('Bought',r.buyDate?fmtDate(r.buyDate):'—')}${lcCell('Days',r.days??'—')}
-      ${lcCell('Cost',fmtR(r.cost,0))}${lcCell('Sale value',fmtR(r.saleValue,0))}${lcCell('Sell ₹',fmtN(r.saleRate,2))}
-    </div></div>`).join('')}</div>
-  </div>
-  <details class="how"><summary>ⓘ How is this worked out?</summary><div class="table-note">Sale value = sale amount minus every charge except STT; cost = purchase amount plus every charge except STT (stamp duty included). Bonus shares cost ₹0 from the allotment date; splits keep the original date and cost. LTCG = held more than 12 months.</div></details>`;
-}
-
-function renderOpen(rows) {
-  const title = `<div class="section-title" style="margin-top:28px">Unrealised — every lot still held, at today&#39;s price</div>`;
-  if(!rows.length) return `${title}<div class="no-data">No open holdings match these filters.</div>`;
-  const noPrice = rows.filter(r=>r.cmp==null);
-  return `${title}
-  ${noPrice.length?`<div class="flag-box"><div class="flag-line"><span class="tag tag-flag">No price</span> ${noPrice.length} lot${noPrice.length>1?'s':''} (${[...new Set(noPrice.map(r=>esc(r.name)))].join(', ')}) have no current price in the Live sheet or screener, so they are <b>not in the unrealised totals</b>.</div></div>`:''}
-  <div class="table-wrap"><table><thead><tr>
-    ${th('open','name','Stock')}${th('open','portfolio','Account')}${th('open','buyDate','Buy Date')}${th('open','days','Days')}${th('open','qty','Qty')}
-    <th>Buy ₹</th>${th('open','cmp','CMP')}${th('open','cost','Cost')}${th('open','value','Value')}${th('open','gain','Gain ₹')}${th('open','gainPct','Gain %','Gain ÷ cost')}${th('open','term','If sold today','STCG/LTCG if sold today')}
-  </tr></thead><tbody>
-  ${rows.map(r=>`<tr>
-    <td class="name-cell" title="${esc(r.isin)}">${esc(r.name)}</td>
-    <td>${portLabel(r.portfolio)}</td>
-    <td class="mono">${fmtDate(r.buyDate)}${r.buyType&&r.buyType!=='Buy'?` <span class="muted">(${esc(r.buyType)})</span>`:''}</td>
-    <td class="mono">${r.days}</td>
-    <td class="mono">${fmtN(r.qty,0)}</td>
-    <td class="mono">${fmtN(r.buyRate,2)}</td>
-    <td class="mono">${r.cmp!=null?fmtN(r.cmp,2):'—'}</td>
-    <td class="mono">${fmtR(r.cost)}</td>
-    <td class="mono">${fmtR(r.value)}</td>
-    <td class="mono">${gainSpan(r.gain)}</td>
-    <td class="mono">${pctSpan(r.gainPct)}</td>
-    <td><span class="tag tag-${r.term==='STCG'?'stcg':'ltcg'}">${r.term}</span></td>
-  </tr>`).join('')}
-  </tbody></table>
-  <div class="lot-cards">${rows.map(r=>`<div class="lot-card">
-    <div class="lc-top"><div class="lc-name">${esc(r.name)}</div><div class="lc-pl">${gainSpan(r.gain)} ${pctSpan(r.gainPct)}</div></div>
-    <div class="lc-meta"><span class="port-dot" style="background:${portColor(r.portfolio)}"></span>
-      <span style="color:${portColor(r.portfolio)};font-weight:600">${esc(r.portfolio)}</span> · bought ${fmtDate(r.buyDate)}</div>
-    <div class="lc-tags"><span class="tag tag-${r.term==='STCG'?'stcg':'ltcg'}">${r.term}</span></div>
-    <div class="lc-grid">
-      ${lcCell('Qty',fmtN(r.qty,0))}${lcCell('Days',r.days)}${lcCell('CMP',r.cmp!=null?fmtN(r.cmp,2):'—')}
-      ${lcCell('Cost',fmtR(r.cost,0))}${lcCell('Value',fmtR(r.value,0))}${lcCell('Buy ₹',fmtN(r.buyRate,2))}
-    </div></div>`).join('')}</div>
-  </div>
-  <details class="how"><summary>ⓘ How is this worked out?</summary><div class="table-note">One row per purchase lot still held. Value = quantity × current price, before selling charges. "If sold today" uses the same 12-month rule as realised gains. A sale always uses the oldest lots in that account first (FIFO), so to book a particular lot you must also sell every older lot of that stock in the same account.</div></details>`;
 }
 
 // ═══════════════════════════════════════
