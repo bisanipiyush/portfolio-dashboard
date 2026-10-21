@@ -19,7 +19,9 @@
 .ph-v{font-family:var(--mono);font-size:20px;font-weight:600;margin-bottom:6px}
 .ph-v2{font-family:var(--mono);font-size:14px}
 .ph-v.green,.ph-v2.green{color:var(--green)} .ph-v.red,.ph-v2.red{color:var(--red)}
-.lc-gk{font-size:9.5px;color:var(--muted);text-align:right}
+.lc-gk{font-size:9.5px;color:var(--muted);text-align:right;font-weight:400}
+.lc-gk2{margin-top:4px}
+.lc-pl small{display:inline;font-size:10.5px;font-weight:500}
 .sort-ctl{display:inline-flex;gap:6px;align-items:center}
 .alloc-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:200;padding:16px}
 .alloc-panel{background:var(--surface);border:1px solid var(--border);border-radius:14px;width:100%;max-width:520px;max-height:85vh;display:flex;flex-direction:column}
@@ -106,8 +108,8 @@ Object.assign(S, {
   posView:     'lot',
   gainMode:    'today',   // Positions header + cards: 'today' | 'unreal' (tap to switch)
   filters:     { portfolio:'All', bucket:'All', tax:'All', status:'All', search:'' },
-  sortCol:     'buyDate',
-  sortDir:     1,
+  sortCol:     'dayPct',   // default: today's % move, biggest rise first
+  sortDir:     -1,
   selBucket:   'Fundamental',
   lastFile:    null,
   source:      null,   // 'file' | 'sheet' — what ↻ Reload re-reads
@@ -661,24 +663,28 @@ const plCell = (pl,pct) => pl==null ? '—' :
 const lcPl = (pl,pct) => pl==null ? '<span class="muted">—</span>' :
   `<span class="${pl>=0?'pl-pos':'pl-neg'}">${pl>=0?'+':''}${fmtL(pl)}<small>${pct>=0?'+':''}${fmtN(pct,1)}%</small></span>`;
 
-// Card corner: today's move or unrealised gain, whichever the header shows
-const lcGain = x => `<div class="lc-pl"><div class="lc-gk">${S.gainMode==='today'?"Today's gain":'Unrealised'}</div>${
-  S.gainMode==='today' ? lcPl(x.dayChg,x.dayPct) : lcPl(x.pl,x.plPct)}</div>`;
+// Card corner: today's move and unrealised gain together, so neither needs
+// a trip back to the header toggle
+const lcLine = (pl,pct,dp) => pl==null ? '<span class="muted">—</span>' :
+  `<span class="${pl>=0?'pl-pos':'pl-neg'}">${pct==null?'':(pct>=0?'+':'')+fmtN(pct,dp)+'% '}<small>${pl>=0?'+':''}${fmtL(pl)}</small></span>`;
+const lcGain = x => `<div class="lc-pl">
+  <div class="lc-gk">Today</div>${lcLine(x.dayChg,x.dayPct,2)}
+  <div class="lc-gk lc-gk2">Unrealised</div>${lcLine(x.pl,x.plPct,1)}</div>`;
 
 function lotCard(l) {
   return `<div class="lot-card">
     <div class="lc-top">
-      <div class="lc-name"><a href="${scrUrl(l.isin)}" target="_blank">${esc(l.name)}</a></div>
+      <div><div class="lc-name"><a href="${scrUrl(l.isin)}" target="_blank">${esc(l.name)}</a></div>
+      <div class="lc-meta">
+        <span class="port-dot" style="background:${portColor(l.portfolio)}"></span>
+        <span style="color:${portColor(l.portfolio)};font-weight:600">${esc(l.portfolio)}</span>
+        · ${fmtDate(l.buyDate)} · ${l.daysHeld}d
+      </div></div>
       ${lcGain(l)}
-    </div>
-    <div class="lc-meta">
-      <span class="port-dot" style="background:${portColor(l.portfolio)}"></span>
-      <span style="color:${portColor(l.portfolio)};font-weight:600">${esc(l.portfolio)}</span>
-      · ${fmtDate(l.buyDate)} · ${l.daysHeld}d
     </div>
     <div class="lc-tags">${statusTag(l.status)}<span class="tag tag-${l.taxType==='STCG'?'stcg':'ltcg'}">${l.taxType}</span>${bucketTag(l.bucket)}</div>
     <div class="lc-grid">
-      ${lcCell('Qty',fmtN(l.qty,0))}${lcCell('Buy ₹',fmtN(l.tradeRate,2))}${lcCell('CMP',l.currentPrice?fmtN(l.currentPrice,2)+dayTag(l.dayPct):'—')}
+      ${lcCell('Qty',fmtN(l.qty,0))}${lcCell('Buy ₹',fmtN(l.tradeRate,2))}${lcCell('CMP',l.currentPrice?fmtN(l.currentPrice,2):'—')}
       ${lcCell('Invested',fmtL(l.invested))}${lcCell('Current',l.currValue?fmtL(l.currValue):'—')}${lcCell('PE',l.pe?fmtN(l.pe,1):'—')}
     </div>
   </div>`;
@@ -692,7 +698,7 @@ function summaryCard(r) {
     </div>
     <div class="lc-tags">${statusTag(r.status)}<span class="tag tag-${r.taxType.includes('STCG')?'stcg':'ltcg'}">${r.taxType}</span>${bucketTag(r.bucket)}</div>
     <div class="lc-grid">
-      ${lcCell('Qty',fmtN(r.qty,0))}${lcCell('Avg Cost',fmtN(r.avgRate,2))}${lcCell('CMP',r.currentPrice?fmtN(r.currentPrice,2)+dayTag(r.dayPct):'—')}
+      ${lcCell('Qty',fmtN(r.qty,0))}${lcCell('Avg Cost',fmtN(r.avgRate,2))}${lcCell('CMP',r.currentPrice?fmtN(r.currentPrice,2):'—')}
       ${lcCell('Invested',fmtL(r.invested))}${lcCell('Current',fmtL(r.currValue))}${lcCell('PE',r.pe?fmtN(r.pe,1):'—')}
     </div>
   </div>`;
