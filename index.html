@@ -7,7 +7,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="common.css?v=5">
+<link rel="stylesheet" href="common.css?v=6">
 <style>
 /* Positions header (tap targets) and allocation panel */
 .pos-head{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0 0 12px}
@@ -89,7 +89,7 @@
   <div id="content"></div>
 </div>
 
-<script src="common.js?v=12"></script>
+<script src="common.js?v=13"></script>
 <script>
 // ═══════════════════════════════════════
 // STATE
@@ -164,7 +164,7 @@ function parseStockDetails(wb) {
     const isin   = String(r[2]||'').trim();
     const bucket = String(r[3]||'').trim();
     if(!isin) continue;
-    S.stockMeta[isin] = { name: String(r[0]||'').trim(), bucket };
+    S.stockMeta[isin] = { name: String(r[0]||'').trim(), bucket, row: i+1 };
   }
 }
 
@@ -408,9 +408,20 @@ function holdingsIssues() {
     detail:`${names(unpriced).length} stock${names(unpriced).length>1?'s have':' has'} no current price: ${names(unpriced).join(', ')}`,
     fix:'Open the Prices tab of the Live sheet and find the stock to see why. If it says "No NSE/BSE code", add a row for it in the Price Map tab (ISIN, Exchange NSE or BSE, Token, Symbol, Source = manual), or ask Claude to work out the values.' });
   const noBucket = S.openLots.filter(l=>!l.bucket);
-  if(noBucket.length) out.push({ name:'Buckets', level:'warn',
-    detail:`${names(noBucket).length} stock${names(noBucket).length>1?'s have':' has'} no bucket in Stock Details: ${names(noBucket).join(', ')}`,
-    fix:`Usually a new stock you just bought. In the Live sheet's Stock Details tab, add a row for it: Name, Name Check (the name as spelt in SCREENER_ALL STKS), ISIN (from your portfolio tab), Bucket and Check = 1. The bucket must be spelt exactly like the other rows: ${BUCKETS.join(', ')}. Reload the dashboard after. Or tell Claude the bucket and it will add the row.` });
+  // One warning per stock, each opening Stock Details at its Bucket cell. The
+  // daily sync adds new buys' rows there, so only the bucket is left to pick.
+  const gid = S.liveWb?.Gids?.['Stock Details'];
+  const sdRows = Object.values(S.stockMeta).map(m=>m.row||0);
+  const nextRow = Math.max(1, ...sdRows) + 1;
+  for(const isin of [...new Set(noBucket.map(l=>l.isin))]) {
+    const name = noBucket.find(l=>l.isin===isin).name, row = S.stockMeta[isin]?.row;
+    out.push({ name:'Buckets', level:'warn',
+      detail: row ? `${name} has no bucket yet.` : `${name} (${isin}) is not in Stock Details yet.`,
+      link: gid==null ? null : row ? { href:sheetLink(SHEET_ID, gid, 'D'+row), label:'Pick its bucket' }
+                                   : { href:sheetLink(SHEET_ID, gid, 'A'+nextRow), label:'Add it in Stock Details' },
+      fix: row ? `The link opens Stock Details at this stock's Bucket cell. Pick a bucket from the dropdown, then reload the dashboard.`
+               : `The daily sync normally adds new stocks here by itself. The link opens the next empty row: type Name, Name Check (as spelt in SCREENER_ALL STKS), ISIN ${isin}, pick the Bucket and put 1 in Check. Or tell Claude the bucket.` });
+  }
   if(!out.length) out.push({ name:'Positions data', level:'ok', detail:`${S.openLots.length} lots: all matched, priced and bucketed.` });
   return out;
 }

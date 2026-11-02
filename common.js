@@ -327,6 +327,10 @@ function getToken() {
 
 // Tabs of one spreadsheet as an XLSX-shaped workbook; wb.AllTabs lists every
 // tab name. `onlyTabs` limits which tabs' values are fetched.
+// Opens a Google Sheet at one tab and cell, e.g. sheetLink(SHEET_ID, 12345, 'D77')
+const sheetLink = (sheetId, gid, cell) =>
+  `https://docs.google.com/spreadsheets/d/${sheetId}/edit#gid=${gid}${cell?'&range='+cell:''}`;
+
 async function fetchWorkbook(sheetId, token, label, onlyTabs) {
   const auth = { headers: { Authorization: 'Bearer '+token } };
   const api  = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}`;
@@ -337,8 +341,9 @@ async function fetchWorkbook(sheetId, token, label, onlyTabs) {
     return res.json();
   };
   // Tab names come from the Sheet itself (none are hard-coded in this page).
-  const meta = await fetch(`${api}?fields=sheets.properties.title`, auth).then(check);
+  const meta = await fetch(`${api}?fields=sheets.properties(title,sheetId)`, auth).then(check);
   const all  = meta.sheets.map(s => s.properties.title);
+  const gids = Object.fromEntries(meta.sheets.map(s => [s.properties.title, s.properties.sheetId]));
   const tabs = all.filter(t => t !== 'Processed Emails' && (!onlyTabs || onlyTabs.includes(t)));
   let wb = { SheetNames: [], Sheets: {} };
   if(tabs.length) {
@@ -348,6 +353,7 @@ async function fetchWorkbook(sheetId, token, label, onlyTabs) {
     wb = valuesToWorkbook(data.valueRanges||[]);
   }
   wb.AllTabs = all;
+  wb.Gids = gids;   // tab → gid, for links straight to a cell (sheetLink)
   return wb;
 }
 
@@ -530,6 +536,7 @@ function openHealthPanel() {
       <div class="hp-row ${c.level}"><span class="hp-icon">${icon[c.level]}</span>
         <div><div class="hp-name">${esc(c.name)}${c.when?` <span class="hp-when">${esc(c.when)}</span>`:''}</div>
         <div class="hp-detail">${esc(c.detail||'')}</div>
+        ${c.link && c.level!=='ok' ? `<a class="hp-link" href="${esc(c.link.href)}" target="_blank" rel="noopener">${esc(c.link.label)} ↗</a>` : ''}
         ${c.fix && c.level!=='ok' ? `<details class="hp-fix"><summary>What to do</summary><div>${esc(c.fix)}</div></details>` : ''}</div></div>`).join('')}</div>
   </div>`;
   const onKey = e => { if(e.key==='Escape') close(); };
