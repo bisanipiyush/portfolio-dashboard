@@ -7,7 +7,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="common.css?v=4">
+<link rel="stylesheet" href="common.css?v=5">
 <style>
 /* Positions header (tap targets) and allocation panel */
 .pos-head{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0 0 12px}
@@ -89,7 +89,7 @@
   <div id="content"></div>
 </div>
 
-<script src="common.js?v=11"></script>
+<script src="common.js?v=12"></script>
 <script>
 // ═══════════════════════════════════════
 // STATE
@@ -400,14 +400,17 @@ function updateBadge() {
 function holdingsIssues() {
   const out = [];
   if(S.errors.length) out.push({ name:'Positions (FIFO)', level:'warn',
-    detail:`${S.errors.length} problem${S.errors.length>1?'s':''}, e.g. ${S.errors[0].portfolio}: ${S.errors[0].msg}` });
+    detail:`${S.errors.length} problem${S.errors.length>1?'s':''}, e.g. ${S.errors[0].portfolio}: ${S.errors[0].msg}`,
+    fix:'The full list is in the red box at the top of this page. Usually a sale is larger than the buys on record, or a split/bonus row is missing. Open that portfolio\'s tab in the Live sheet and check the stock\'s rows, or ask Claude to look.' });
   const names = ls => [...new Set(ls.map(l=>l.name))];
   const unpriced = S.openLots.filter(l=>!l.currentPrice);
   if(unpriced.length) out.push({ name:'Prices', level:'warn',
-    detail:`${names(unpriced).length} stock${names(unpriced).length>1?'s have':' has'} no current price: ${names(unpriced).join(', ')}` });
+    detail:`${names(unpriced).length} stock${names(unpriced).length>1?'s have':' has'} no current price: ${names(unpriced).join(', ')}`,
+    fix:'Open the Prices tab of the Live sheet and find the stock to see why. If it says "No NSE/BSE code", add a row for it in the Price Map tab (ISIN, Exchange NSE or BSE, Token, Symbol, Source = manual), or ask Claude to work out the values.' });
   const noBucket = S.openLots.filter(l=>!l.bucket);
   if(noBucket.length) out.push({ name:'Buckets', level:'warn',
-    detail:`${names(noBucket).length} stock${names(noBucket).length>1?'s have':' has'} no bucket in Stock Details: ${names(noBucket).join(', ')}` });
+    detail:`${names(noBucket).length} stock${names(noBucket).length>1?'s have':' has'} no bucket in Stock Details: ${names(noBucket).join(', ')}`,
+    fix:`Usually a new stock you just bought. In the Live sheet's Stock Details tab, add a row for it: Name, Name Check (the name as spelt in SCREENER_ALL STKS), ISIN (from your portfolio tab), Bucket and Check = 1. The bucket must be spelt exactly like the other rows: ${BUCKETS.join(', ')}. Reload the dashboard after. Or tell Claude the bucket and it will add the row.` });
   if(!out.length) out.push({ name:'Positions data', level:'ok', detail:`${S.openLots.length} lots: all matched, priced and bucketed.` });
   return out;
 }

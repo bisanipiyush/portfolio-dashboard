@@ -448,26 +448,36 @@ function healthChecks(liveWb, live, pageIssues) {
   const rows = liveWb && liveWb.Sheets['Health'] ? XLSX.utils.sheet_to_json(liveWb.Sheets['Health'], {header:1, defval:null, raw:true}).slice(1) : [];
   const line = name => { const r = rows.find(x => String(x[0]??'').trim()===name);
     return r ? { when:sheetStamp(r[1]), result:String(r[2]??'').trim(), detail:String(r[3]??''), period:String(r[4]??'').trim() } : null; };
-  const job = (name, label, maxHrs, late) => {
+  // fix: what to do about a warning, shown behind "What to do" in the panel
+  const job = (name, label, maxHrs, late, fixFail, fixLate) => {
     const l = line(name);
-    if(!l) return out.push({ name:label, level:'warn', detail:'No status yet (written by its next run).' });
+    if(!l) return out.push({ name:label, level:'warn', detail:'No status yet (written by its next run).',
+      fix:'Nothing to do yet: this clears after the job\'s next run. If it stays for days, ask Claude to check the job on GitHub.' });
     const age = hrs(stampDate(l.when));
-    if(l.result==='FAIL') return out.push({ name:label, level:'fail', detail:l.detail, when:l.when });
-    if(age > maxHrs)      return out.push({ name:label, level:'warn', detail:late, when:l.when });
+    if(l.result==='FAIL') return out.push({ name:label, level:'fail', detail:l.detail, when:l.when, fix:fixFail });
+    if(age > maxHrs)      return out.push({ name:label, level:'warn', detail:late, when:l.when, fix:fixLate });
     out.push({ name:label, level:'ok', detail:l.detail, when:l.when });
   };
-  job('Contract-note sync', 'Daily contract-note sync', 30, 'Has not run in the last 30 hours.');
-  job('Screener refresh', 'Weekly screener refresh', 8*24, 'Has not run in the last 8 days.');
+  job('Contract-note sync', 'Daily contract-note sync', 30, 'Has not run in the last 30 hours.',
+    'A contract note could not be read, so its trades are NOT in the Sheet yet. GitHub also sent you an email about it. Copy the message above (or forward that email) to Claude and ask to fix the sync.',
+    'The daily job has stopped running. Ask Claude to check the "portfolio-automation" Actions on GitHub. Trades from the missed days will be picked up once it runs again.');
+  job('Screener refresh', 'Weekly screener refresh', 8*24, 'Has not run in the last 8 days.',
+    'The screener data could not be refreshed, so DMA/Status values may be stale. Copy the message above to Claude and ask to fix the screener refresh.',
+    'The weekly job has stopped running. Ask Claude to check the "portfolio-automation" Actions on GitHub.');
 
   // Live prices: script status cells in the Prices tab
-  if(!live || !live.lastRun) out.push({ name:'Live prices', level:'warn', detail:'No price status in the Prices tab.' });
+  const priceMapFix = 'Open the Prices tab of the Live sheet to see which stock has no price and why. If it says "No NSE/BSE code", add a row for it in the Price Map tab (ISIN, Exchange NSE or BSE, Token, Symbol, Source = manual), or ask Claude to work out the values.';
+  if(!live || !live.lastRun) out.push({ name:'Live prices', level:'warn', detail:'No price status in the Prices tab.',
+    fix:'The price script has never written its status. Ask Claude to check the Apps Script on the Live sheet (Extensions → Apps Script).' });
   else {
     const m = String(live.result||'').match(/^OK: (\d+) of (\d+)/), hhmm = now.getHours()*100+now.getMinutes();
     const market = now.getDay()>=1 && now.getDay()<=5 && hhmm>=930 && hhmm<=1545;
     const age = hrs(stampDate(live.lastRun))*60;
-    if(/^ERROR/.test(live.result||'')) out.push({ name:'Live prices', level:'fail', detail:live.result, when:live.lastRun });
-    else if(market && age > 35)        out.push({ name:'Live prices', level:'warn', detail:`Not updated for ${Math.round(age)} minutes during market hours.`, when:live.lastRun });
-    else if(m && +m[1] < +m[2])        out.push({ name:'Live prices', level:'warn', detail:live.result, when:live.lastRun });
+    if(/^ERROR/.test(live.result||'')) out.push({ name:'Live prices', level:'fail', detail:live.result, when:live.lastRun,
+      fix:'The price script failed, so prices on the dashboard are old. Copy the message above to Claude and ask to fix the live-price script.' });
+    else if(market && age > 35)        out.push({ name:'Live prices', level:'warn', detail:`Not updated for ${Math.round(age)} minutes during market hours.`, when:live.lastRun,
+      fix:'The price script\'s timer seems to have stopped. If it is still like this after the next half hour, ask Claude to check the Apps Script trigger on the Live sheet.' });
+    else if(m && +m[1] < +m[2])        out.push({ name:'Live prices', level:'warn', detail:live.result, when:live.lastRun, fix:priceMapFix });
     else out.push({ name:'Live prices', level:'ok', detail:live.result||'OK', when:live.lastRun });
   }
 
@@ -476,12 +486,16 @@ function healthChecks(liveWb, live, pageIssues) {
   const expKey = `${expect.getFullYear()}-${pad2(expect.getMonth()+1)}`;
   const expLbl = expect.toLocaleString('en-IN', { month:'short', year:'numeric' });
   const cas = rows.filter(r => String(r[0]??'').startsWith('CAS reconciliation: '));
-  if(!cas.length) out.push({ name:'CAS reconciliation', level:'warn', detail:'No status yet (written when the CAS check runs).' });
+  if(!cas.length) out.push({ name:'CAS reconciliation', level:'warn', detail:'No status yet (written when the CAS check runs).',
+    fix:'Ask Claude to run the CAS check once the month\'s NSDL CAS is in your Gmail.' });
   for(const r of cas) {
     const who = String(r[0]).replace('CAS reconciliation: ',''), l = line(String(r[0]));
     const level = l.result==='WARN' || l.result==='FAIL' ? 'warn' : (l.period && l.period < expKey ? 'warn' : 'ok');
+    const due = l.period && l.period < expKey && level==='warn' && l.result==='OK';
     out.push({ name:`CAS check: ${who}`, level, when:l.when,
-      detail: l.period && l.period < expKey && level==='warn' && l.result==='OK' ? `${expLbl} CAS not checked yet (last: ${l.detail.split(' CAS')[0]}).` : l.detail });
+      detail: due ? `${expLbl} CAS not checked yet (last: ${l.detail.split(' CAS')[0]}).` : l.detail,
+      fix: due ? `Forward the ${expLbl} NSDL CAS for ${who} to your Gmail (if it isn't there already), then ask Claude to run the CAS check.`
+               : `The CAS and the Sheet disagree for ${who}. Ask Claude to open the CAS check results and go through each mismatch with you; it may be a missing trade, a corporate action (split, bonus, rights) or a transfer.` });
   }
   for(const p of (pageIssues||[])) out.push(p);
   return out;
@@ -515,7 +529,8 @@ function openHealthPanel() {
     <div class="hp-list">${checks.slice().sort((a,b)=>order[a.level]-order[b.level]).map(c=>`
       <div class="hp-row ${c.level}"><span class="hp-icon">${icon[c.level]}</span>
         <div><div class="hp-name">${esc(c.name)}${c.when?` <span class="hp-when">${esc(c.when)}</span>`:''}</div>
-        <div class="hp-detail">${esc(c.detail||'')}</div></div></div>`).join('')}</div>
+        <div class="hp-detail">${esc(c.detail||'')}</div>
+        ${c.fix && c.level!=='ok' ? `<details class="hp-fix"><summary>What to do</summary><div>${esc(c.fix)}</div></details>` : ''}</div></div>`).join('')}</div>
   </div>`;
   const onKey = e => { if(e.key==='Escape') close(); };
   const close = () => { ov.remove(); document.removeEventListener('keydown', onKey); };
@@ -619,10 +634,12 @@ function ledgerIssues() {
   const out = [];
   const errs = S.ledgerErrors || [];
   if(errs.length) out.push({ name:'Ledger rows', level:'warn',
-    detail:`${errs.length} row${errs.length>1?'s':''} could not be read, e.g. ${errs[0].portfolio}: ${errs[0].msg}` });
+    detail:`${errs.length} row${errs.length>1?'s':''} could not be read, e.g. ${errs[0].portfolio}: ${errs[0].msg}`,
+    fix:'The full list is in the red box at the top of this page. Open that portfolio\'s tab in the Portfolio Ledger and correct the row (usually a blank or mistyped date, quantity or ISIN), or ask Claude to fix it.' });
   const miss = (S.realised||[]).filter(r => r.flags && r.flags.includes('Buy missing'));
   if(miss.length) out.push({ name:'Sales without a purchase', level:'warn',
-    detail:`${miss.length} sale${miss.length>1?'s':''} have no matching buy in the Ledger: ${[...new Set(miss.map(r=>r.name))].slice(0,5).join(', ')}` });
+    detail:`${miss.length} sale${miss.length>1?'s':''} have no matching buy in the Ledger: ${[...new Set(miss.map(r=>r.name))].slice(0,5).join(', ')}`,
+    fix:'The buy for these shares is not in the Ledger yet, so their gain cannot be worked out. It is usually a purchase from before 01-04-2025. Give Claude the broker\'s contract note or statement for that purchase and ask to add it.' });
   if(!out.length) out.push({ name:'Ledger data', level:'ok', detail:`${(S.ledgerTxs||[]).length} rows read; every sale matched to purchases.` });
   return out;
 }
