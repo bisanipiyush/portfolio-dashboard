@@ -7,7 +7,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="common.css?v=6">
+<link rel="stylesheet" href="common.css?v=7">
 <style>
 /* Positions header (tap targets) and allocation panel */
 .pos-head{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0 0 12px}
@@ -105,7 +105,7 @@ Object.assign(S, {
   // personal figures live in its code. A bucket without one shows "No cap set".
   settings:  { Fundamental: {}, EST: {}, 'SME Reversal / IPO': {}, 'CWIP Reversal': {}, Others: {} },
   activeTab:   'dashboard',
-  posView:     'lot',
+  posView:     'summary',
   gainMode:    'today',   // Positions header + cards: 'today' | 'unreal' (tap to switch)
   filters:     { portfolio:'All', bucket:'All', tax:'All', status:'All', search:'' },
   sortCol:     'dayPct',   // default: today's % move, biggest rise first
@@ -522,19 +522,15 @@ function renderDashboard() {
     </div>
     <div class="stat-card accent-border">
       <div class="label">Unrealised P&amp;L</div>
-      <div class="value ${plClass}">${totPL>=0?'+':''}${fmtL(totPL)}</div>
-      <div class="sub ${plClass}">${totPct>=0?'+':''}${fmtN(totPct,2)}%</div>
+      <div class="value ${plClass}">${totPct>=0?'+':''}${fmtN(totPct,2)}%</div>
+      <div class="sub-amt ${plClass}">${totPL>=0?'+':''}${fmtL(totPL)}</div>
     </div>
     <div class="stat-card accent-border">
       <div class="label">Today</div>
-      ${dl.length ? `<div class="value ${dayCls}">${dayChg>=0?'+':''}${fmtL(dayChg)}</div>
-      <div class="sub ${dayCls}">${dayPct>=0?'+':''}${fmtN(dayPct,2)}% · ${dl.length} of ${lots.length} lots</div>`
+      ${dl.length ? `<div class="value ${dayCls}">${dayPct>=0?'+':''}${fmtN(dayPct,2)}%</div>
+      <div class="sub-amt ${dayCls}">${dayChg>=0?'+':''}${fmtL(dayChg)}</div>
+      <div class="sub">${dl.length} of ${lots.length} lots</div>`
       : `<div class="value muted">—</div><div class="sub">No live prices yet</div>`}
-    </div>
-    <div class="stat-card">
-      <div class="label">Portfolios Active</div>
-      <div class="value">${Object.keys(portMap).length}</div>
-      <div class="sub">${lots.filter(l=>l.taxType==='STCG').length} STCG · ${lots.filter(l=>l.taxType==='LTCG').length} LTCG lots</div>
     </div>
   </div>
 
@@ -571,8 +567,9 @@ function renderDashboard() {
       const plP=v.inv>0?pl/v.inv*100:0;
       return `<div class="port-card">
         <div class="pname" style="color:${portColor(p)}">${p}</div>
-        <div class="pval">${fmtL(v.cur)}</div>
-        <div class="psub ${pl>=0?'green':'red'}">${pl>=0?'+':''}${fmtL(pl)} (${fmtN(plP,1)}%)</div>
+        <div class="pval ${pl>=0?'green':'red'}">${pl>=0?'+':''}${fmtN(plP,1)}%</div>
+        <div class="psub-amt ${pl>=0?'green':'red'}">${pl>=0?'+':''}${fmtL(pl)}</div>
+        <div class="psub">${fmtL(v.cur)} now</div>
       </div>`;
     }).join('')}
   </div>
@@ -927,8 +924,8 @@ function renderPositions() {
   return `
   <div class="table-toolbar">
     <div class="view-toggle">
-      <button class="view-btn${S.posView==='lot'?' active':''}" data-view="lot" onclick="setPosView('lot')">Lot View</button>
       <button class="view-btn${S.posView==='summary'?' active':''}" data-view="summary" onclick="setPosView('summary')">Summary</button>
+      <button class="view-btn${S.posView==='lot'?' active':''}" data-view="lot" onclick="setPosView('lot')">Lot View</button>
     </div>
     <input class="search-input" type="text" placeholder="Search stock / ISIN…"
       value="${esc(f.search)}"
