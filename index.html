@@ -973,12 +973,13 @@ function renderRotation() {
   const cur = bl.reduce((s,l)=>s+(l.currValue??l.invested),0);
   const avail = cfg.cap ? Math.max(0,cfg.cap-inv) : null;
 
-  // Group by ISIN+portfolio, only Exit and Exit Watch
+  // Group by ISIN across all portfolios (exit calls are per stock), only Exit and Exit Watch
   const byStock = {};
   for(const l of bl) {
     if(l.status!=='Exit' && l.status!=='Exit Watch') continue;
-    const k=`${l.isin}|${l.portfolio}`;
-    if(!byStock[k]) byStock[k]={isin:l.isin,name:l.name,portfolio:l.portfolio,status:l.status,inv:0,cur:0};
+    const k=l.isin;
+    if(!byStock[k]) byStock[k]={isin:l.isin,name:l.name,ports:new Set(),status:l.status,inv:0,cur:0};
+    byStock[k].ports.add(l.portfolio);
     byStock[k].inv += l.invested;
     byStock[k].cur += (l.currValue??l.invested);
     // If any lot is Exit, the group is Exit
@@ -999,7 +1000,7 @@ function renderRotation() {
       <div class="bucket-btn-grp">
         ${BUCKETS.map(bn=>{
           const st=S.openLots.filter(l=>l.bucket===bn);
-          const exitCount=st.filter(l=>l.status==='Exit'||l.status==='Exit Watch').length;
+          const exitCount=new Set(st.filter(l=>l.status==='Exit'||l.status==='Exit Watch').map(l=>l.isin)).size;
           const binv=st.reduce((s,l)=>s+l.invested,0);
           const isActive=S.selBucket===bn;
           const aCls=isActive?bucketActiveClass(bn):'';
@@ -1030,16 +1031,16 @@ function renderRotation() {
           : `<div class="cand-row" style="padding-bottom:6px">
               <span style="font-size:9px;color:var(--muted);font-weight:700;letter-spacing:.5px">STOCK</span>
               <span style="font-size:9px;color:var(--muted);font-weight:700;text-align:right">STATUS</span>
-              <span style="font-size:9px;color:var(--muted);font-weight:700;text-align:right">INVESTED</span>
+              <span style="font-size:9px;color:var(--muted);font-weight:700;text-align:right">VALUE</span>
               <span style="font-size:9px;color:var(--muted);font-weight:700;text-align:right">P&amp;L</span>
             </div>
             ${cands.map(c=>`<div class="cand-row">
               <div>
                 <div class="cand-name">${esc(c.name)}</div>
-                <div class="cand-meta">${esc(c.portfolio)}</div>
+                <div class="cand-meta">${c.ports.size} portfolio${c.ports.size!==1?'s':''}</div>
               </div>
               <div class="cand-val">${statusTag(c.status)}</div>
-              <div class="cand-val">${fmtL(c.inv)}</div>
+              <div class="cand-val">${fmtL(c.cur)}</div>
               <div class="cand-val ${c.pl>=0?'pl-pos':'pl-neg'}">
                 ${c.pl>=0?'+':''}${fmtL(c.pl)}<br>
                 <small style="font-size:9.5px">${fmtN(c.plPct,1)}%</small>
