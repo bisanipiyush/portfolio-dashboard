@@ -609,6 +609,21 @@ function parseLossesBF(wb) {
   return out;
 }
 
+// Portfolios whose profit is business income (e.g. a trading firm), from the
+// Live sheet's "Portfolio Types" tab (Portfolio | Treatment). Their shares are
+// stock-in-trade, so they never appear in the capital-gains (STCG/LTCG) views.
+function parseBusinessPortfolios(wb) {
+  const out = new Set(), ws = wb.Sheets['Portfolio Types'];
+  if(!ws) return out;
+  const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:null});
+  const H = (rows[0]||[]).map(h => String(h??'').trim());
+  const cp = H.indexOf('Portfolio'), ct = H.indexOf('Treatment');
+  if(cp<0 || ct<0) return out;
+  for(const r of rows.slice(1))
+    if(/business/i.test(String(r[ct]??''))) out.add(String(r[cp]??'').trim());
+  return out;
+}
+
 // For the Ledger pages: the Ledger itself, plus only what they need from the
 // Live sheet (ISIN aliases, and tab order for portfolio colours). withPrices
 // also reads current prices, for unrealised gains on the lots still held.
@@ -616,7 +631,7 @@ async function loadLedgerData(withPrices) {
   setStatus('Signing in…');
   const token = await getToken();
   setStatus('Fetching ledger…');
-  const live   = await fetchWorkbook(SHEET_ID,  token, 'portfolio sheet', withPrices ? null : ['ISIN Aliases']);
+  const live   = await fetchWorkbook(SHEET_ID,  token, 'portfolio sheet', withPrices ? null : ['ISIN Aliases', 'Portfolio Types']);
   const ledger = await fetchWorkbook(LEDGER_ID, token, 'Portfolio Ledger');
   S.isinAliases = {};
   parseIsinAliases(live);
@@ -624,7 +639,8 @@ async function loadLedgerData(withPrices) {
   S.portfolios   = live.AllTabs.filter(t => ledger.SheetNames.includes(t));
   S.ledgerTxs    = txs;
   S.ledgerErrors = errors;
-  const fifo     = runFIFO(txs);
+  S.businessPortfolios = parseBusinessPortfolios(live);
+  const fifo     = runFIFO(txs.filter(t => !S.businessPortfolios.has(t.portfolio)));
   S.realised     = fifo.realised;   // unmatched sells come back as "Buy missing" rows
   S.openLots     = fifo.openLots;
   S.currentPrices = withPrices ? parseCurrentPrices(live) : {};

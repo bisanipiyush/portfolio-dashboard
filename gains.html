@@ -74,7 +74,7 @@ table.cg-lots td{padding:6px 9px}
   <div id="content"></div>
 </div>
 
-<script src="common.js?v=13"></script>
+<script src="common.js?v=14"></script>
 <script>
 // Reads the Portfolio Ledger (the permanent record). Loading, FIFO matching
 // and the tax rules are shared with the holdings page: common.js
@@ -171,7 +171,8 @@ function renderGains() {
   const fys = [...new Set(S.realised.map(r=>r.fy))].sort().reverse();
   const f = S.cgFilters;
   if(!fys.includes(f.fy)) f.fy = fys[0] || null;
-  const ports = ledgerPortfolios();
+  // Business-income portfolios (e.g. a trading firm) are not capital gains
+  const ports = ledgerPortfolios().filter(p => !S.businessPortfolios.has(p));
   const tps   = [...new Set(ports.map(taxpayerOf))];
   return `${ledgerErrorBox()}
   <div class="table-toolbar">
