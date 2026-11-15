@@ -225,7 +225,10 @@ const LEDGER_HEADERS = {
   net:'Net Amount', tradeRate:'Trade Rate',
 };
 
-function parseLedger(wb) {
+// business = portfolios whose profit is business income: their per-share
+// figure follows the firm's rule (only brokerage in cost / off the sale value),
+// which is also what the sync writes in their Trade Rate column.
+function parseLedger(wb, business = new Set()) {
   const txs = [], errors = [];
   const num = v => typeof v==='number' ? v : null;
   for(const sheetName of wb.SheetNames) {
@@ -249,7 +252,8 @@ function parseLedger(wb) {
       const err = msg => errors.push({ portfolio:sheetName, isin:tx.isin, name, date:tx.date, msg:`row ${i+1}: ${msg}` });
       if(isNaN(tx.date)) { err('unreadable date'); continue; }
       if(!BUY_TYPES.includes(type) && type!=='Sell' && type!=='Split') { err(`unknown type "${type}"`); continue; }
-      const charges = (tx.brokerage||0) + (tx.gst||0) + (tx.other||0);   // everything except STT
+      const charges = business.has(sheetName) ? (tx.brokerage||0)                       // firm: brokerage only
+                    : (tx.brokerage||0) + (tx.gst||0) + (tx.other||0);   // family: everything except STT
       if(type==='Bonus')       tx.tradeRate = 0;
       else if(type==='Split')  tx.tradeRate = null;
       else if(tx.amount!=null) tx.tradeRate = (type==='Sell' ? tx.amount - charges : tx.amount + charges) / qty;
@@ -624,6 +628,142 @@ function parseBusinessPortfolios(wb) {
   return out;
 }
 
+// ═══════════════════════════════════════
+// BUSINESS INCOME (a trading firm: shares are stock-in-trade)
+// ═══════════════════════════════════════
+// Rules agreed with Piyush and confirmed by the firm's auditor (15-11-2026):
+//   • Weighted average cost per scrip (moving average as on the sale date).
+//   • Buy cost = Amount + Brokerage; Sale value = Amount − Brokerage.
+//     GST, STT and Other charges (stamp, exchange, SEBI…) go to P&L.
+//   • Same-day buy + sell of a scrip in one account = intraday (speculative):
+//     the smaller of the day's bought and sold qty, at that day's average
+//     buy / sell rates (brokerage included). Its GST/STT/Other stay in the
+//     normal trading P&L. Whatever is left over goes into / out of stock.
+//   • Bonus = shares at ₹0 cost; Split = same total cost over the new qty
+//     (row qty = holding after the split); Rights / IPO = bought at the price paid.
+//   • Closing stock on 31-Mar = lower of cost or market, scrip by scrip, at the
+//     31-Mar price from the Live sheet's "Year-end Prices" tab (FY | ISIN | Price).
+//     Needed once a year only, so no live prices. The written-down value
+//     becomes next year's opening cost (as in the books).
+// One pool per portfolio (= broking account). Weighted average across several
+// accounts of the same firm is still to be decided if a second one opens.
+function parseYearEndPrices(wb) {
+  const out = {}, ws = wb && wb.Sheets['Year-end Prices'];
+  if(!ws) return out;
+  const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:null, raw:true});
+  const H = (rows[0]||[]).map(h => String(h??'').trim());
+  const [cf, ci, cp] = ['FY','ISIN','Price'].map(n => H.indexOf(n));
+  if([cf,ci,cp].some(i => i<0)) return out;
+  for(const r of rows.slice(1)) {
+    const fy = String(r[cf]??'').trim(), isin = String(r[ci]??'').trim(), p = r[cp];
+    if(fy && isin && typeof p==='number') (out[fy] ??= {})[isin] = p;
+  }
+  return out;
+}
+
+const fyEnd = fy => new Date(+fy.slice(3,7)+1, 2, 31);   // "FY 2026-27" → 31-03-2027
+function nextFY(fy) { const y = +fy.slice(3,7)+1; return `FY ${y}-${String(y+1).slice(2)}`; }
+
+function runBusiness(txs, yearEndPrices = {}) {
+  const errors = [], years = {};   // years[portfolio][fy]
+  const pools = {};                // pools[portfolio][isin] = { name, qty, cost }
+  const yearOf = (p, fy) => ((years[p] ??= {})[fy] ??= { fy, portfolio:p, sales:[], intraday:[], purchases:0,
+    charges:{ gst:0, stt:0, other:0 }, opening:0, closing:null });
+  const cur = {};                  // portfolio → FY being filled
+
+  // Closes portfolio p's year: each scrip at lower of cost or the 31-Mar price.
+  // The closing value becomes the next year's opening cost.
+  const closeYear = (p, fy, last) => {
+    const y = yearOf(p, fy), prices = yearEndPrices[fy] || {};
+    const ended = new Date() > fyEnd(fy);
+    const rows = Object.entries(pools[p]||{}).filter(([,x]) => x.qty > 1e-9).map(([isin, x]) => {
+      const price = ended ? (prices[isin] ?? null) : null, market = price==null ? null : x.qty*price;
+      const value = market==null ? x.cost : Math.min(x.cost, market);
+      return { isin, name:x.name, qty:x.qty, avg:x.cost/x.qty, cost:x.cost, price, market, value,
+               basis: market==null ? (ended ? 'No price' : 'Cost') : (market < x.cost ? 'Market' : 'Cost') };
+    }).sort((a,b) => a.name.localeCompare(b.name));
+    y.closing = { ended, rows, cost: rows.reduce((s,r)=>s+r.cost,0), value: rows.reduce((s,r)=>s+r.value,0) };
+    if(last) return;
+    for(const r of rows) pools[p][r.isin].cost = r.value;   // written down → new cost
+    yearOf(p, nextFY(fy)).opening = y.closing.value;
+  };
+
+  // One group = one portfolio + scrip + day, in date order
+  const groups = [], byKey = {};
+  for(const tx of txs) {
+    const isin = S.isinAliases[tx.isin] || tx.isin, k = `${tx.portfolio}|${isin}|${dayKey(tx.date)}`;
+    if(byKey[k]) byKey[k].txs.push(tx);
+    else groups.push(byKey[k] = { isin, portfolio:tx.portfolio, date:tx.date, txs:[tx] });
+  }
+  groups.sort((a,b) => a.date-b.date);
+
+  for(const g of groups) {
+    const p = g.portfolio, fy = finYear(g.date);
+    while(cur[p] && cur[p] < fy) { closeYear(p, cur[p], false); cur[p] = nextFY(cur[p]); }
+    cur[p] = fy;
+    const y = yearOf(p, fy), pool = ((pools[p] ??= {})[g.isin] ??= { name:g.txs[0].name, qty:0, cost:0 });
+    pool.name = g.txs[0].name;
+    const err = msg => errors.push({ portfolio:p, isin:g.isin, name:pool.name, date:g.date, msg });
+    let bQty = 0, bVal = 0, sQty = 0, sVal = 0;
+    for(const tx of g.txs) {
+      y.charges.gst += tx.gst||0; y.charges.stt += tx.stt||0; y.charges.other += tx.other||0;
+      if(tx.type==='Split') {
+        if(pool.qty <= 1e-9) err(`Split on ${fmtDate(tx.date)}: no shares held to split`);
+        else pool.qty = tx.qty;                             // same total cost over the new qty
+      } else if(tx.type==='Bonus') {
+        pool.qty += tx.qty;                                 // at ₹0
+      } else if(tx.type==='Sell') {
+        sQty += tx.qty; sVal += tx.amount!=null ? tx.amount - (tx.brokerage||0) : tx.qty*tx.tradeRate;
+      } else {
+        const val = tx.amount!=null ? tx.amount + (tx.brokerage||0) : tx.qty*tx.tradeRate;
+        if(tx.type==='Buy') { bQty += tx.qty; bVal += val; }
+        else { pool.qty += tx.qty; pool.cost += val; y.purchases += val; }   // Rights / IPO: never intraday
+      }
+    }
+    const iq = Math.min(bQty, sQty);
+    if(iq > 1e-9) {
+      const bRate = bVal/bQty, sRate = sVal/sQty;
+      y.intraday.push({ date:g.date, isin:g.isin, name:pool.name, qty:iq, buyRate:bRate, saleRate:sRate,
+                        buyValue:iq*bRate, saleValue:iq*sRate, profit:iq*(sRate-bRate) });
+    }
+    if(bQty - iq > 1e-9) {                                  // rest of the day's buys → stock
+      const v = (bQty-iq) * bVal/bQty;
+      pool.qty += bQty-iq; pool.cost += v; y.purchases += v;
+    }
+    if(sQty - iq > 1e-9) {                                  // rest of the day's sales ← stock, at weighted average
+      const q = sQty-iq, saleValue = q * sVal/sQty;
+      let cost = null;
+      if(pool.qty < q - 1e-9) err(`Sold ${fmtN(q,0)} on ${fmtDate(g.date)} but only ${fmtN(pool.qty,0)} held: cost unknown`);
+      else {
+        cost = q * pool.cost/pool.qty; pool.qty -= q; pool.cost -= cost;
+        if(pool.qty < 1e-9) { pool.qty = 0; pool.cost = 0; }
+      }
+      y.sales.push({ date:g.date, isin:g.isin, name:pool.name, qty:q, saleRate:sVal/sQty, saleValue,
+                     avgCost: cost==null ? null : cost/q, cost, profit: cost==null ? null : saleValue-cost });
+    }
+  }
+  // Close every year up to the current one (a year with no trades still carries stock)
+  const thisFY = finYear(new Date());
+  for(const p of Object.keys(cur)) {
+    let fy = cur[p];
+    while(fy < thisFY) { closeYear(p, fy, false); fy = nextFY(fy); }
+    closeYear(p, fy, true);
+  }
+  // Year totals, as a Trading account
+  for(const ys of Object.values(years)) for(const y of Object.values(ys)) {
+    const known = y.sales.filter(s => s.cost!=null);
+    y.salesValue    = y.sales.reduce((s,r)=>s+r.saleValue,0);
+    y.costOfSales   = known.reduce((s,r)=>s+r.cost,0);
+    y.realised      = known.reduce((s,r)=>s+r.profit,0);
+    y.writeDown     = y.closing ? y.closing.cost - y.closing.value : 0;
+    y.grossProfit   = y.realised - y.writeDown;          // = Sales + Closing − Opening − Purchases
+    y.chargesTotal  = y.charges.gst + y.charges.stt + y.charges.other;
+    y.tradingProfit = y.grossProfit - y.chargesTotal;
+    y.speculative   = y.intraday.reduce((s,r)=>s+r.profit,0);
+  }
+  return { years, errors };
+}
+
 // For the Ledger pages: the Ledger itself, plus only what they need from the
 // Live sheet (ISIN aliases, and tab order for portfolio colours). withPrices
 // also reads current prices, for unrealised gains on the lots still held.
@@ -635,11 +775,13 @@ async function loadLedgerData(withPrices) {
   const ledger = await fetchWorkbook(LEDGER_ID, token, 'Portfolio Ledger');
   S.isinAliases = {};
   parseIsinAliases(live);
-  const { txs, errors } = parseLedger(ledger);
+  S.businessPortfolios = parseBusinessPortfolios(live);
+  const { txs, errors } = parseLedger(ledger, S.businessPortfolios);
   S.portfolios   = live.AllTabs.filter(t => ledger.SheetNames.includes(t));
   S.ledgerTxs    = txs;
   S.ledgerErrors = errors;
-  S.businessPortfolios = parseBusinessPortfolios(live);
+  S.yearEndPrices = parseYearEndPrices(live);
+  S.business     = runBusiness(txs.filter(t => S.businessPortfolios.has(t.portfolio)), S.yearEndPrices);
   const fifo     = runFIFO(txs.filter(t => !S.businessPortfolios.has(t.portfolio)));
   S.realised     = fifo.realised;   // unmatched sells come back as "Buy missing" rows
   S.openLots     = fifo.openLots;

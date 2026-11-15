@@ -74,7 +74,7 @@ table.cg-lots td{padding:6px 9px}
   <div id="content"></div>
 </div>
 
-<script src="common.js?v=14"></script>
+<script src="common.js?v=15"></script>
 <script>
 // Reads the Portfolio Ledger (the permanent record). Loading, FIFO matching
 // and the tax rules are shared with the holdings page: common.js
@@ -517,10 +517,107 @@ function exportGains() {
 }
 
 // ═══════════════════════════════════════
+// BUSINESS PROFIT — portfolios marked "Business income" (a trading firm).
+// Worked out in common.js runBusiness; this only draws it.
+// ═══════════════════════════════════════
+S.gView = 'cg';         // 'cg' = capital gains, else a business portfolio's name
+S.bizFY = {};           // business portfolio → chosen FY
+function setGView(v) { S.gView = v; render(); }
+
+function viewSwitch() {
+  const biz = [...(S.businessPortfolios||[])].filter(p => S.business?.years?.[p]);
+  if(!biz.length) return '';
+  const b = (v, label) => `<button class="btn btn-sm ${S.gView===v?'btn-primary':'btn-ghost'}" data-v="${esc(v)}" onclick="setGView(this.dataset.v)">${esc(label)}</button>`;
+  return `<div class="table-toolbar" style="gap:6px">${b('cg','Capital gains')}${biz.map(p => b(p, `Business profit · ${p}`)).join('')}</div>`;
+}
+
+function renderBusiness(p) {
+  const ys = S.business.years[p] || {};
+  const fys = Object.keys(ys).sort().reverse();
+  if(!fys.includes(S.bizFY[p])) S.bizFY[p] = fys[0];
+  const y = ys[S.bizFY[p]];
+  const errs = S.business.errors.filter(e => e.portfolio===p);
+  const amt = n => window.innerWidth < 600 ? fmtL(n) : fmtR(n,0);
+  const g0 = n => n==null ? '<span class="muted">—</span>' : `<span class="${n>=0?'pl-pos':'pl-neg'}">${amt(n)}</span>`;
+  const c = y.closing, ended = c.ended;
+  const line = (label, n, cls) => `<tr${cls?` class="${cls}"`:''}><td>${label}</td><td class="mono" style="text-align:right">${cls?`<b>${g0(n)}</b>`:amt(n)}</td></tr>`;
+
+  const errBox = errs.length ? `<div class="error-inner" style="margin-bottom:14px"><b>Needs a look:</b><ul style="margin:6px 0 0 18px">
+    ${errs.map(e => `<li>${esc(e.name)}: ${esc(e.msg)}</li>`).join('')}</ul></div>` : '';
+
+  // Trading account (what goes to Tally / the auditor) and the P&L lines below it
+  const trading = `<div class="section-title">Trading account — ${esc(y.fy)}${ended?'':' (year still running)'}</div>
+    <div class="table-scroll" style="margin-bottom:8px"><table class="cg-ov"><tbody>
+      ${line('Opening stock', y.opening)}
+      ${line('Purchases (incl. brokerage)', y.purchases)}
+      ${line('Sales (net of brokerage)', y.salesValue)}
+      ${line(ended ? 'Closing stock (lower of cost or market)' : 'Stock in hand (at cost)', c.value)}
+      ${line('Gross profit on shares', y.grossProfit, 'subtotal')}
+      ${line('Less: GST', -y.charges.gst)}
+      ${line('Less: STT', -y.charges.stt)}
+      ${line('Less: Other charges (stamp, exchange, SEBI…)', -y.charges.other)}
+      ${line('Trading profit (normal business)', y.tradingProfit, 'cg-grand')}
+      ${line('Intraday profit (speculative), shown separately', y.speculative, 'subtotal')}
+    </tbody></table></div>
+    <details class="how" style="margin-bottom:22px"><summary>ⓘ How is this worked out?</summary><div class="table-note">
+      Rules confirmed by the firm's auditor (15-11-2026).<br>
+      • <b>Cost</b>: weighted average per scrip, as on the sale date. Buy cost = amount + brokerage. Sale value = amount − brokerage.<br>
+      • <b>Charges</b>: GST, STT and other charges (stamp duty, exchange, SEBI) are not part of cost; they go to P&L as expenses, including those on intraday trades.<br>
+      • <b>Intraday</b>: a buy and a sell of the same scrip on the same day in the same account. The smaller of the two quantities is intraday, at that day's average rates (brokerage included). It is speculative business income, so it is kept out of the trading profit; the auditor decides how to show it. The rest goes into or out of stock.<br>
+      • <b>Bonus</b> shares come in at ₹0; a <b>split</b> keeps the same total cost; <b>rights / IPO</b> shares at the price paid.<br>
+      • <b>Closing stock</b> (once a year, on 31-Mar): each scrip at the lower of its cost or its 31-Mar market value, from the Live sheet's "Year-end Prices" tab. That value is next year's opening stock. Until 31-Mar the stock is shown at cost.<br>
+      • Gross profit = Sales + Closing stock − Opening stock − Purchases. Other firm expenses (interest on capital, salary, bank charges…) are not included here; they come in the partnership books.
+    </div></details>`;
+
+  const tbl = (head, rows) => `<div class="table-wrap" style="margin-bottom:22px"><table><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
+    <tbody>${rows.join('') || `<tr><td colspan="${head.length}" class="muted">None in ${esc(y.fy)}.</td></tr>`}</tbody></table></div>`;
+  const m = (n,d=2) => `<td class="mono">${fmtN(n,d)}</td>`, r = n => `<td class="mono">${n==null?'—':fmtR(n)}</td>`;
+
+  const stock = `<div class="section-title">${ended ? 'Closing stock on 31-Mar' : 'Stock in hand (valued on 31-Mar)'} — scrip-wise</div>
+    ${tbl(['Scrip','Qty','Avg cost ₹','Cost','31-Mar price','Market value','Value taken','Basis'],
+      c.rows.map(x => `<tr><td class="name-cell" title="${esc(x.isin)}">${esc(x.name)}</td>${m(x.qty,0)}${m(x.avg,4)}${r(x.cost)}
+        <td class="mono">${x.price==null?'—':fmtN(x.price,2)}</td>${r(x.market)}<td class="mono"><b>${fmtR(x.value)}</b></td>
+        <td>${x.basis==='No price' ? '<span class="tag tag-flag" title="No 31-Mar price in the Year-end Prices tab, so it is taken at cost">No price</span>' : esc(x.basis)}</td></tr>`))}`;
+
+  const sales = `<div class="section-title">Sales — ${esc(y.fy)}</div>
+    ${tbl(['Date','Scrip','Qty','Sale ₹ (net)','Sale value','Avg cost ₹','Cost','Profit'],
+      y.sales.map(x => `<tr><td class="mono">${fmtDate(x.date)}</td><td class="name-cell">${esc(x.name)}</td>${m(x.qty,0)}${m(x.saleRate)}${r(x.saleValue)}
+        <td class="mono">${x.avgCost==null?'—':fmtN(x.avgCost,4)}</td>${r(x.cost)}<td class="mono">${gainSpan(x.profit)}</td></tr>`))}`;
+
+  const intra = `<div class="section-title">Intraday (speculative) — ${esc(y.fy)}</div>
+    ${tbl(['Date','Scrip','Qty','Buy ₹','Sell ₹','Buy value','Sale value','Profit'],
+      y.intraday.map(x => `<tr><td class="mono">${fmtDate(x.date)}</td><td class="name-cell">${esc(x.name)}</td>${m(x.qty,0)}${m(x.buyRate)}${m(x.saleRate)}
+        ${r(x.buyValue)}${r(x.saleValue)}<td class="mono">${gainSpan(x.profit)}</td></tr>`))}`;
+
+  return `${errBox}
+  <div class="table-toolbar">
+    <select class="filter-select" data-p="${esc(p)}" onchange="S.bizFY[this.dataset.p]=this.value;render()">${fys.map(f=>opt(f,S.bizFY[p])).join('')}</select>
+    <button class="btn btn-ghost btn-sm" data-p="${esc(p)}" onclick="exportBusiness(this.dataset.p)" title="Trading account, stock register, sales and intraday as Excel">⇩ Excel</button>
+  </div>
+  ${trading}${stock}${sales}${intra}`;
+}
+
+function exportBusiness(p) {
+  const y = S.business.years[p][S.bizFY[p]]; if(!y) return;
+  const acct = [['Opening stock',y.opening],['Purchases (incl. brokerage)',y.purchases],['Sales (net of brokerage)',y.salesValue],
+    [y.closing.ended?'Closing stock (lower of cost or market)':'Stock in hand (at cost)',y.closing.value],['Gross profit on shares',y.grossProfit],
+    ['GST',y.charges.gst],['STT',y.charges.stt],['Other charges',y.charges.other],['Trading profit (normal business)',y.tradingProfit],
+    ['Intraday profit (speculative)',y.speculative]].map(([k,v]) => ({ 'Item':k, 'Amount ₹':r2(v) }));
+  const stock = y.closing.rows.map(x => ({ 'Scrip':x.name, 'ISIN':x.isin, 'Qty':x.qty, 'Avg Cost':r2(x.avg), 'Cost':r2(x.cost),
+    '31-Mar Price':x.price, 'Market Value':r2(x.market), 'Value Taken':r2(x.value), 'Basis':x.basis }));
+  const sales = y.sales.map(x => ({ 'Date':x.date, 'Scrip':x.name, 'ISIN':x.isin, 'Qty':x.qty, 'Sale Rate (net)':r2(x.saleRate),
+    'Sale Value':r2(x.saleValue), 'Avg Cost':r2(x.avgCost), 'Cost':r2(x.cost), 'Profit':r2(x.profit) }));
+  const intra = y.intraday.map(x => ({ 'Date':x.date, 'Scrip':x.name, 'ISIN':x.isin, 'Qty':x.qty, 'Buy Rate':r2(x.buyRate),
+    'Sell Rate':r2(x.saleRate), 'Buy Value':r2(x.buyValue), 'Sale Value':r2(x.saleValue), 'Profit':r2(x.profit) }));
+  exportXlsx(`${p} ${y.fy}.xlsx`, [['Trading Account',acct],['Stock Register',stock],['Sales',sales],['Intraday',intra]]);
+}
+
+// ═══════════════════════════════════════
 // RENDER
 // ═══════════════════════════════════════
 function render() {
-  document.getElementById('content').innerHTML = renderGains();
+  const biz = S.gView!=='cg' && S.business?.years?.[S.gView];
+  document.getElementById('content').innerHTML = viewSwitch() + (biz ? renderBusiness(S.gView) : renderGains());
 }
 
 initLedgerPage(render, true);   // with current prices, for unrealised gains
